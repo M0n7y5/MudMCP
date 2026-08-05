@@ -28,10 +28,10 @@ Prerequisites: [Docker](https://docs.docker.com/get-docker/) with the Compose pl
    <PackageReference Include="MudBlazor" Version="9.0.0" />
    ```
 
-2. Start the server with that version (defaults to `9.0.0`):
+2. Download the compose file and start the server with your version (defaults to `9.0.0`):
 
    ```bash
-   git clone https://github.com/M0n7y5/MudMCP.git && cd MudMCP
+   curl -fsSLO https://raw.githubusercontent.com/M0n7y5/MudMCP/main/docker-compose.yml
    MUDBLAZOR_VERSION=9.0.0 docker compose up -d
    ```
 
@@ -83,7 +83,24 @@ Cached data lives in the `mudblazor-data` volume mounted at `/app/data`; each ve
 
 Options A and B run in stdio mode: most MCP clients (Cursor, Claude Code, Claude Desktop) spawn the server as a child process and talk over stdin/stdout, so no web server is started. Option C runs the HTTP server from source.
 
-### Option A: dotnet run
+### Option A: release binary (recommended)
+
+Download the archive for your platform from [Releases](https://github.com/M0n7y5/MudMCP/releases) (`win-x64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`), extract it, and point your MCP client at the binary:
+
+```json
+{
+  "mcpServers": {
+    "mudblazor": {
+      "command": "<path-to-extracted>/MudBlazor.Mcp",
+      "args": ["--stdio", "--version", "9.0.0"]
+    }
+  }
+}
+```
+
+On Windows the binary is `MudBlazor.Mcp.exe`. No .NET SDK is required.
+
+### Option B: from source with dotnet run
 
 Add to your project's `.mcp.json` (or `.cursor/mcp.json`, `claude_desktop_config.json`):
 
@@ -107,27 +124,6 @@ Add to your project's `.mcp.json` (or `.cursor/mcp.json`, `claude_desktop_config
 ```
 
 Replace `<path-to-MudMCP>` with the absolute path to your clone and `9.0.0` with your project's MudBlazor version.
-
-### Option B: self-contained executable
-
-Publish a single-file executable that starts without the .NET SDK:
-
-```powershell
-dotnet publish src/MudBlazor.Mcp/MudBlazor.Mcp.csproj `
-  -c Release -r win-x64 --self-contained true `
-  -p:PublishSingleFile=true -o publish/win-x64
-```
-
-```json
-{
-  "mcpServers": {
-    "mudblazor": {
-      "command": "<path-to-MudMCP>/publish/win-x64/MudBlazor.Mcp.exe",
-      "args": ["--stdio", "--version", "9.0.0"]
-    }
-  }
-}
-```
 
 ### Option C: from source (HTTP mode)
 
