@@ -3,11 +3,12 @@
 
 services:
   mudblazor-mcp:
+    # `docker compose up` builds locally and tags the result with the GHCR name.
+    # To run the published image instead: docker compose pull && docker compose up --no-build
+    image: ghcr.io/m0n7y5/mudmcp:latest
     build:
       context: .
       dockerfile: Dockerfile
-    # For production use, replace the build section above with the image line below
-    # image: mudblazor-mcp:latest
     container_name: mudblazor-mcp
     ports:
       # Host port 8000 matches the default local development URL. Update any
@@ -25,16 +26,9 @@ services:
       # - MudBlazor__Repository__Url=https://github.com/MudBlazor/MudBlazor.git
       # - MudBlazor__Repository__DataPath=/app/data
       # - MudBlazor__Repository__MaxCachedVersions=5
-    healthcheck:
-      # /health/live returns 200 immediately; /health/ready becomes healthy only
-      # after the component index has been built (may take a few minutes on
-      # first run while the MudBlazor repository is cloned).
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      # Allow up to 10 minutes for the initial clone + index build.
-      start_period: 600s
+    # Health checking is inherited from the image HEALTHCHECK (liveness probe on
+    # /health/live with a 10-minute start period for the initial clone + index
+    # build). Override the `healthcheck:` key here only to change those timings.
     restart: unless-stopped
 
 volumes:

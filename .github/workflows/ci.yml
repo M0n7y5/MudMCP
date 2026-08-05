@@ -1,0 +1,116 @@
+# Copyright (c) 2026 Mud MCP Contributors
+# Licensed under the GNU General Public License v2.0. See LICENSE file in the project root for full license information.
+
+# Builds and tests the solution, then builds the multi-arch Docker image and
+# publishes it to GitHub Container Registry (ghcr.io).
+#
+# Publishing rules:
+#   - pull requests:  build only (no push), validates the Dockerfile
+#   - push to main:   pushes :main, :latest, and :sha-<commit>
+#   - tags vX.Y.Z:    pushes :X.Y.Z and :X.Y
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore MudBlazor.Mcp.slnx
+
+      - name: Build
+        run: dotnet build MudBlazor.Mcp.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: >-
+          dotnet test MudBlazor.Mcp.slnx
+          --configuration Release --no-build --no-restore
+          --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+          if-no-files-found: ignore
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The .NET build cross-compiles via $TARGETARCH, but the runtime stage
+      # still runs apt-get under emulation for the non-native architecture.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Normalized to lowercase automatically (ghcr.io/m0n7y5/mudmcp).
+          images: ghcr.io/${{ github.repository_owner }}/mudmcp
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

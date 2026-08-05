@@ -201,6 +201,18 @@ Run the server in a container with built-in health checks and a named volume tha
 
 **Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose plugin)
 
+**Use the published image** (built by CI for `linux/amd64` and `linux/arm64`):
+
+```bash
+docker run -d --name mudblazor-mcp \
+  -p 8000:8080 \
+  -e MUDBLAZOR_VERSION=9.0.0 \
+  -v mudblazor-data:/app/data \
+  ghcr.io/m0n7y5/mudmcp:latest
+```
+
+**Or build locally with Compose:**
+
 ```bash
 # Build the image and start the container
 docker compose up --build -d
