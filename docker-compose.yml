@@ -3,9 +3,9 @@
 
 services:
   mudblazor-mcp:
-    # Runs the published multi-arch image from GitHub Container Registry.
-    # To build from source instead: docker build -t ghcr.io/m0n7y5/mudmcp:latest .
+    # Always runs the published multi-arch image from GitHub Container Registry.
     image: ghcr.io/m0n7y5/mudmcp:latest
+    pull_policy: always
     container_name: mudblazor-mcp
     ports:
       # Host port 8000 matches the default local development URL.

@@ -115,7 +115,7 @@ docker compose logs -f
 curl http://localhost:8000/health
 ```
 
-Pick up a newer image later with `docker compose pull && docker compose up -d`.
+Compose always pulls and runs exactly `ghcr.io/m0n7y5/mudmcp:latest`, so every `docker compose up` uses the current published image.
 
 Without Compose, the same setup as a plain `docker run`:
 
@@ -126,8 +126,6 @@ docker run -d --name mudblazor-mcp \
   -v mudblazor-data:/app/data \
   ghcr.io/m0n7y5/mudmcp:latest
 ```
-
-To build the image from source instead: `docker build -t ghcr.io/m0n7y5/mudmcp:latest .`
 
 The MCP endpoint is `http://localhost:8000/mcp`. Cached data lives in the `mudblazor-data` volume mounted at `/app/data`; each version gets its own subdirectory with the git clone and serialized index. Tagged commits are immutable, so existing clones are reused without fetching.
 
