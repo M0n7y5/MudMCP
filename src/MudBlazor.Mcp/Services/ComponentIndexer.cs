@@ -516,6 +516,9 @@ public sealed class ComponentIndexer : IComponentIndexer
         var docFiles = Directory.GetFiles(docsPath, "*Page.razor", SearchOption.AllDirectories);
         _logger.LogDebug("Found {Count} documentation files", docFiles.Length);
 
+        // Pass 1: parse every page so the route map can be built from the pages themselves.
+        var docResults = new List<RazorDocResult>();
+
         foreach (var docFile in docFiles)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -523,17 +526,9 @@ public sealed class ComponentIndexer : IComponentIndexer
             try
             {
                 var docResult = await _razorParser.ParseDocumentationFileAsync(docFile, cancellationToken).ConfigureAwait(false);
-                
-                if (docResult?.ComponentName is not null && _components.TryGetValue(docResult.ComponentName, out var component))
+                if (docResult is not null)
                 {
-                    // Enhance component with documentation info
-                    var enhanced = component with
-                    {
-                        Description = docResult.Description ?? component.Description,
-                        RelatedComponents = docResult.RelatedComponents
-                    };
-                    
-                    _components[docResult.ComponentName] = enhanced;
+                    docResults.Add(docResult);
                 }
             }
             catch (IOException ex)
@@ -551,6 +546,74 @@ public sealed class ComponentIndexer : IComponentIndexer
                 Interlocked.Increment(ref _documentationParseFailures);
                 _logger.LogWarning(ex, "Failed to parse documentation file: {File}", docFile);
             }
+        }
+
+        // Route ("/components/{route}") -> canonical component name, built from each page's
+        // @page directives and DocsPageHeader Component attribute. This is authoritative:
+        // routes like "buttonfab" -> MudFab and aliases like "bar" -> barchart cannot be
+        // derived from component names alone.
+        var routeMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var docResult in docResults)
+        {
+            if (docResult.ComponentName is null
+                || !_components.TryGetValue(docResult.ComponentName, out var pageComponent))
+            {
+                continue;
+            }
+
+            foreach (var route in docResult.Routes)
+            {
+                routeMap.TryAdd(route, pageComponent.Name);
+            }
+        }
+
+        // Fallback for components without docs pages: their default route is the
+        // lowercased name without the "Mud" prefix. Page-derived routes take precedence.
+        foreach (var name in _components.Keys)
+        {
+            var slug = name.StartsWith("Mud", StringComparison.OrdinalIgnoreCase) ? name[3..] : name;
+            routeMap.TryAdd(slug, name);
+        }
+
+        // Pass 2: resolve related references against the index and the route map. Anything
+        // unresolved (helper classes, external pages) is dropped rather than guessed.
+        foreach (var docResult in docResults)
+        {
+            if (docResult.ComponentName is null
+                || !_components.TryGetValue(docResult.ComponentName, out var component))
+            {
+                continue;
+            }
+
+            var related = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var name in docResult.RelatedComponents)
+            {
+                if (_components.TryGetValue(name, out var relatedComponent))
+                {
+                    related.Add(relatedComponent.Name);
+                }
+            }
+
+            foreach (var slug in docResult.RelatedComponentSlugs)
+            {
+                if (routeMap.TryGetValue(slug, out var name))
+                {
+                    related.Add(name);
+                }
+            }
+
+            related.Remove(component.Name);
+
+            // Enhance component with documentation info
+            var enhanced = component with
+            {
+                Description = docResult.Description ?? component.Description,
+                RelatedComponents = related.ToList()
+            };
+
+            _components[component.Name] = enhanced;
         }
     }
 

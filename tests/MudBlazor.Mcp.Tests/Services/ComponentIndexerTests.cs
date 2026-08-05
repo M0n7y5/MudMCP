@@ -876,4 +876,65 @@ public class ComponentIndexerTests : IDisposable
             File.SetUnixFileMode(unreadablePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
     }
+
+    [Fact]
+    public async Task BuildIndexAsync_ResolvesRelatedComponentsFromDocsRoutes()
+    {
+        // Arrange - MudFab is documented under the route "buttonfab" (not "fab"),
+        // and the Button docs page links it plus mentions MudIconButton in prose.
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudFab.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudFab : MudComponentBase
+            {
+            }
+            """);
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudIconButton.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudIconButton : MudComponentBase
+            {
+            }
+            """);
+
+        var docsDir = Path.Combine(repoPath, "src", "MudBlazor.Docs", "Pages", "Components");
+        Directory.CreateDirectory(Path.Combine(docsDir, "Button"));
+        Directory.CreateDirectory(Path.Combine(docsDir, "ButtonFAB"));
+
+        // The Fab page declares the non-derivable route "buttonfab" and its component
+        await File.WriteAllTextAsync(Path.Combine(docsDir, "ButtonFAB", "FabPage.razor"), """
+            @page "/components/buttonfab"
+            <DocsPage>
+                <DocsPageHeader Title="Floating Action Button" Component="@nameof(MudFab)" />
+            </DocsPage>
+            """);
+
+        // The Button page links the Fab route, mentions MudIconButton in prose,
+        // and uses layout tags that must NOT become relationships
+        await File.WriteAllTextAsync(Path.Combine(docsDir, "Button", "ButtonPage.razor"), """
+            @page "/components/button"
+            <DocsPage>
+                <DocsPageHeader Title="Button" Component="@nameof(MudButton)" />
+                <MudText>See <MudLink Href="/components/buttonfab#usage">FAB</MudLink> for floating buttons.</MudText>
+                <MudText>Works well with <CodeInline>MudIconButton</CodeInline> and <CodeInline>MudUnknownThing</CodeInline>.</MudText>
+            </DocsPage>
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        // Act
+        await indexer.BuildIndexAsync();
+
+        // Assert - route-resolved and prose-resolved relations only; no layout-tag junk
+        var button = await indexer.GetComponentAsync("MudButton");
+        Assert.NotNull(button);
+        Assert.Contains("MudFab", button.RelatedComponents);
+        Assert.Contains("MudIconButton", button.RelatedComponents);
+        Assert.DoesNotContain("MudText", button.RelatedComponents);
+        Assert.DoesNotContain("MudLink", button.RelatedComponents);
+        Assert.DoesNotContain("MudUnknownThing", button.RelatedComponents);
+        Assert.DoesNotContain("MudButton", button.RelatedComponents);
+    }
 }

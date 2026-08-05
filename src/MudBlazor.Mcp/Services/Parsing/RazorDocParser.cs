@@ -54,12 +54,13 @@ public sealed partial class RazorDocParser
         ArgumentNullException.ThrowIfNull(content);
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        var componentName = ExtractComponentName(filePath);
+        var componentName = ExtractComponentFromHeader(content) ?? ExtractComponentName(filePath);
         var title = ExtractPageTitle(content);
         var description = ExtractSubTitle(content);
         var sections = ExtractSections(content);
-        var relatedComponents = ExtractRelatedComponents(content);
+        var (relatedNames, relatedSlugs) = ExtractRelatedComponents(content);
         var usageNotes = ExtractUsageNotes(content);
+        var routes = ExtractRoutes(content);
 
         return new RazorDocResult
         {
@@ -68,7 +69,9 @@ public sealed partial class RazorDocParser
             Title = title,
             Description = description,
             Sections = sections,
-            RelatedComponents = relatedComponents,
+            RelatedComponents = relatedNames,
+            RelatedComponentSlugs = relatedSlugs,
+            Routes = routes,
             UsageNotes = usageNotes
         };
     }
@@ -85,6 +88,44 @@ public sealed partial class RazorDocParser
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Extracts the canonical component name from the DocsPageHeader
+    /// (e.g. Component="@nameof(MudAlert)" or Component="@nameof(MudBlazor.Charts.Bar&lt;T&gt;)").
+    /// The header is authoritative; file-name derivation is only a fallback because
+    /// pages like ButtonFAB/FabPage.razor document MudFab.
+    /// </summary>
+    private static string? ExtractComponentFromHeader(string content)
+    {
+        var match = ComponentAttributeRegex().Match(content);
+        if (!match.Success)
+            return null;
+
+        var typeName = match.Groups[1].Value;
+
+        // Strip generic arguments: "MudAutocomplete<T>" -> "MudAutocomplete"
+        var genericStart = typeName.IndexOf('<');
+        if (genericStart >= 0)
+            typeName = typeName[..genericStart];
+
+        // Use the simple name: "MudBlazor.Charts.Bar" -> "Bar"
+        var lastDot = typeName.LastIndexOf('.');
+        return lastDot >= 0 ? typeName[(lastDot + 1)..] : typeName;
+    }
+
+    /// <summary>
+    /// Extracts every route this page is served under
+    /// (e.g. @page "/components/barchart" and the alias @page "/components/bar").
+    /// </summary>
+    private static List<string> ExtractRoutes(string content)
+    {
+        var routes = new List<string>();
+        foreach (Match match in PageRouteRegex().Matches(content))
+        {
+            routes.Add(match.Groups[1].Value.ToLowerInvariant());
+        }
+        return routes;
     }
 
     private static string? ExtractPageTitle(string content)
@@ -150,32 +191,53 @@ public sealed partial class RazorDocParser
         return text.Trim();
     }
 
-    private static List<string> ExtractRelatedComponents(string content)
+    /// <summary>
+    /// Extracts related-component references from a documentation page.
+    /// Names come from explicit references (<c>ApiTypeLink</c>, <c>CodeInline</c> prose mentions);
+    /// slugs come from <c>href="/components/{slug}"</c> links and must be resolved against the
+    /// component index by the caller. Layout markup tags are deliberately NOT treated as
+    /// relationships - a page using MudText/MudLink for its prose is not "related" to them.
+    /// </summary>
+    private static (List<string> Names, List<string> Slugs) ExtractRelatedComponents(string content)
     {
-        var related = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var slugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Find links to other components
-        var linkMatches = ComponentLinkRegex().Matches(content);
-        foreach (Match match in linkMatches)
+        // Links to other component pages: href="/components/{route}[#fragment]".
+        // Nested route aliases (e.g. "chart-types/barchart") are kept whole so they
+        // can be resolved against the route map built from @page directives.
+        foreach (Match match in ComponentLinkRegex().Matches(content))
         {
-            var componentPath = match.Groups[1].Value;
-            var componentName = Path.GetFileNameWithoutExtension(componentPath);
-            
-            if (componentName.EndsWith("Page"))
+            var slug = match.Groups[1].Value;
+
+            // Strip fragments and query strings
+            var end = slug.IndexOfAny(['#', '?']);
+            if (end >= 0)
             {
-                var name = $"Mud{componentName[..^4]}";
-                related.Add(name);
+                slug = slug[..end];
+            }
+
+            slug = slug.Trim('/');
+
+            if (slug.Length > 0)
+            {
+                slugs.Add(slug.ToLowerInvariant());
             }
         }
 
-        // Find MudXxx references in code
-        var mudMatches = MudComponentRefRegex().Matches(content);
-        foreach (Match match in mudMatches)
+        // Explicit API type references: <ApiTypeLink TypeName="MudXxx" />
+        foreach (Match match in ApiTypeLinkRegex().Matches(content))
         {
-            related.Add(match.Groups[1].Value);
+            names.Add(match.Groups[1].Value);
         }
 
-        return related.ToList();
+        // Prose references to other components: <CodeInline>MudXxx</CodeInline>
+        foreach (Match match in CodeInlineComponentRegex().Matches(content))
+        {
+            names.Add(match.Groups[1].Value);
+        }
+
+        return (names.ToList(), slugs.ToList());
     }
 
     private static List<string> ExtractUsageNotes(string content)
@@ -223,8 +285,17 @@ public sealed partial class RazorDocParser
     [GeneratedRegex(@"href\s*=\s*""/components/([^""]+)""", RegexOptions.IgnoreCase)]
     private static partial Regex ComponentLinkRegex();
 
-    [GeneratedRegex(@"<(Mud[A-Z][a-zA-Z]+)")]
-    private static partial Regex MudComponentRefRegex();
+    [GeneratedRegex(@"<ApiTypeLink\s[^>]*TypeName\s*=\s*""(Mud\w+)""", RegexOptions.IgnoreCase)]
+    private static partial Regex ApiTypeLinkRegex();
+
+    [GeneratedRegex(@"<CodeInline[^>]*>\s*(Mud[A-Z]\w*)\s*</CodeInline>")]
+    private static partial Regex CodeInlineComponentRegex();
+
+    [GeneratedRegex(@"Component\s*=\s*""@nameof\(([^)]+)\)""", RegexOptions.IgnoreCase)]
+    private static partial Regex ComponentAttributeRegex();
+
+    [GeneratedRegex(@"@page\s+""/components/([^""]+)""", RegexOptions.IgnoreCase)]
+    private static partial Regex PageRouteRegex();
 
     [GeneratedRegex(@"<MudAlert[^>]*>(.*?)</MudAlert>", RegexOptions.Singleline)]
     private static partial Regex AlertContentRegex();
@@ -241,6 +312,18 @@ public record RazorDocResult
     public string? Description { get; init; }
     public List<DocumentationSection> Sections { get; init; } = [];
     public List<string> RelatedComponents { get; init; } = [];
+
+    /// <summary>
+    /// Route paths from href="/components/{route}" links (e.g. "togglegroup" or
+    /// "chart-types/barchart"). Resolved against the docs route map by the caller.
+    /// </summary>
+    public List<string> RelatedComponentSlugs { get; init; } = [];
+
+    /// <summary>
+    /// Route paths this page is served under, from @page directives
+    /// (e.g. "barchart" and its alias "bar").
+    /// </summary>
+    public List<string> Routes { get; init; } = [];
     public List<string> UsageNotes { get; init; } = [];
 }
 
