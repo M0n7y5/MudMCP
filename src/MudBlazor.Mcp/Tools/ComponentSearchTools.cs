@@ -216,15 +216,12 @@ public sealed class ComponentSearchTools
         sb.AppendLine($"# Components Related to {component.Name} (v{versionContext.Version})");
         sb.AppendLine();
 
-        if (related.Count == 0)
-        {
-            sb.AppendLine("No related components found.");
-            return sb.ToString();
-        }
+        var sectionsStart = sb.Length;
 
-        // Group by relationship type
-        var parent = component.BaseType is not null 
-            ? related.FirstOrDefault(r => r.Name.Equals(component.BaseType, StringComparison.OrdinalIgnoreCase))
+        // Group by relationship type; base types may carry generic arguments (e.g. MudBaseInput<T>)
+        var baseTypeName = StripGenericArguments(component.BaseType);
+        var parent = baseTypeName is not null
+            ? related.FirstOrDefault(r => r.Name.Equals(baseTypeName, StringComparison.OrdinalIgnoreCase))
             : null;
 
         var children = related.Where(r => 
@@ -245,6 +242,16 @@ public sealed class ComponentSearchTools
             sb.AppendLine("## Parent Component (Base Type)");
             sb.AppendLine();
             sb.AppendLine($"- **{parent.Name}**: {parent.Summary ?? "No description"}");
+            sb.AppendLine();
+        }
+        else if (component.BaseType is not null
+            && relationship is RelationshipType.All or RelationshipType.Parent)
+        {
+            // The base type is known but is a base class rather than an indexed component
+            // (e.g. MudBaseButton under src/MudBlazor/Base).
+            sb.AppendLine("## Parent Component (Base Type)");
+            sb.AppendLine();
+            sb.AppendLine($"- **{component.BaseType}**: base class (not an indexed component). Use `get_api_reference` for its members.");
             sb.AppendLine();
         }
 
@@ -286,6 +293,11 @@ public sealed class ComponentSearchTools
             sb.AppendLine();
         }
 
+        if (sb.Length == sectionsStart)
+        {
+            sb.AppendLine("No related components found.");
+        }
+
         return sb.ToString();
     }
 
@@ -299,6 +311,16 @@ public sealed class ComponentSearchTools
             "examples" => SearchFields.Examples,
             _ => SearchFields.All
         };
+    }
+
+    /// <summary>
+    /// Strips generic type arguments from a type name (e.g. "MudBaseInput&lt;T&gt;" becomes "MudBaseInput").
+    /// </summary>
+    private static string? StripGenericArguments(string? typeName)
+    {
+        if (typeName is null) return null;
+        var index = typeName.IndexOf('<');
+        return index < 0 ? typeName : typeName[..index];
     }
 
     private static RelationshipType ParseRelationshipType(string relationshipType)

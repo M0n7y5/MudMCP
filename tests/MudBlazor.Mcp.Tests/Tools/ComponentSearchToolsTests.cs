@@ -238,6 +238,44 @@ public class ComponentSearchToolsTests
         Assert.Contains("not found", ex.Message);
     }
 
+    [Fact]
+    public async Task GetRelatedComponentsAsync_ParentNotIndexed_ShowsBaseTypeFallback()
+    {
+        // Arrange - MudButton's base type (MudBaseButton) is a base class, not an indexed component
+        var indexer = new Mock<IComponentIndexer>();
+
+        var buttonComponent = new ComponentInfo(
+            Name: "MudButton",
+            Namespace: "MudBlazor",
+            Summary: "A Material Design button component",
+            Description: null,
+            Category: "Buttons",
+            BaseType: "MudBaseButton",
+            Parameters: [],
+            Events: [],
+            Methods: [],
+            Examples: [],
+            RelatedComponents: [],
+            DocumentationUrl: null,
+            SourceUrl: null
+        );
+
+        indexer.Setup(x => x.GetComponentAsync("MudButton", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(buttonComponent);
+        indexer.Setup(x => x.GetRelatedComponentsAsync(
+                "MudButton", It.IsAny<RelationshipType>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Act
+        var result = await ComponentSearchTools.GetRelatedComponentsAsync(
+            indexer.Object, NullLogger, _versionContext, "MudButton", "parent", CancellationToken.None);
+
+        // Assert - the known base type is surfaced instead of a bare "not found"
+        Assert.Contains("Parent Component (Base Type)", result);
+        Assert.Contains("MudBaseButton", result);
+        Assert.DoesNotContain("No related components found", result);
+    }
+
     #endregion
 
     #region Helper Methods
