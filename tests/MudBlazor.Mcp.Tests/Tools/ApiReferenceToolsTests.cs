@@ -20,64 +20,49 @@ public class ApiReferenceToolsTests
     #region GetEnumValuesAsync Tests
 
     [Fact]
-    public async Task GetEnumValuesAsync_WithValidEnum_ReturnsValues()
+    public async Task GetEnumValuesAsync_WithIndexedEnum_ReturnsValues()
     {
+        // Arrange
+        var indexer = CreateEnumIndexer();
+
         // Act
         var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, "Color", CancellationToken.None);
+            indexer, NullLogger, _versionContext, "Color", CancellationToken.None);
 
-        // Assert
+        // Assert - values come from the indexed enum, not a hard-coded catalog
         Assert.Contains("Color Enum Values", result);
         Assert.Contains("Primary", result);
         Assert.Contains("Secondary", result);
         Assert.Contains("Success", result);
         Assert.Contains("Error", result);
+        Assert.Contains("Theme colors.", result);
     }
 
     [Fact]
-    public async Task GetEnumValuesAsync_WithSizeEnum_ReturnsValues()
+    public async Task GetEnumValuesAsync_UsageExample_ShowsEnumTypePrefix()
     {
+        // Arrange
+        var indexer = CreateEnumIndexer();
+
         // Act
         var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, "Size", CancellationToken.None);
+            indexer, NullLogger, _versionContext, "Color", CancellationToken.None);
 
-        // Assert
-        Assert.Contains("Size Enum Values", result);
-        Assert.Contains("Small", result);
-        Assert.Contains("Medium", result);
-        Assert.Contains("Large", result);
-    }
-
-    [Fact]
-    public async Task GetEnumValuesAsync_WithVariantEnum_ReturnsValues()
-    {
-        // Act
-        var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, "Variant", CancellationToken.None);
-
-        // Assert
-        Assert.Contains("Text", result);
-        Assert.Contains("Filled", result);
-        Assert.Contains("Outlined", result);
-    }
-
-    [Fact]
-    public async Task GetEnumValuesAsync_CaseInsensitive_ReturnsValues()
-    {
-        // Act - use lowercase
-        var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, "color", CancellationToken.None);
-
-        // Assert
-        Assert.Contains("Primary", result);
+        // Assert - usage example must show EnumType.Value syntax for the first value
+        Assert.Contains("Usage Example", result);
+        Assert.Contains("Color.Primary", result);
     }
 
     [Fact]
     public async Task GetEnumValuesAsync_WithEmptyEnumName_ThrowsMcpException()
     {
+        // Arrange
+        var indexer = new Mock<IComponentIndexer>();
+
         // Act & Assert
         var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(async () =>
-            await ApiReferenceTools.GetEnumValuesAsync(NullLogger, _versionContext, "", CancellationToken.None));
+            await ApiReferenceTools.GetEnumValuesAsync(
+                indexer.Object, NullLogger, _versionContext, "", CancellationToken.None));
 
         Assert.Contains("enumName", ex.Message);
     }
@@ -85,9 +70,13 @@ public class ApiReferenceToolsTests
     [Fact]
     public async Task GetEnumValuesAsync_WithNullEnumName_ThrowsMcpException()
     {
+        // Arrange
+        var indexer = new Mock<IComponentIndexer>();
+
         // Act & Assert
         var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(async () =>
-            await ApiReferenceTools.GetEnumValuesAsync(NullLogger, _versionContext, null!, CancellationToken.None));
+            await ApiReferenceTools.GetEnumValuesAsync(
+                indexer.Object, NullLogger, _versionContext, null!, CancellationToken.None));
 
         Assert.Contains("enumName", ex.Message);
     }
@@ -95,56 +84,31 @@ public class ApiReferenceToolsTests
     [Fact]
     public async Task GetEnumValuesAsync_WithUnknownEnum_ThrowsMcpException()
     {
+        // Arrange
+        var indexer = new Mock<IComponentIndexer>();
+        indexer.Setup(x => x.GetApiReferenceAsync("UnknownEnum", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApiReference?)null);
+
         // Act & Assert
         var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(async () =>
-            await ApiReferenceTools.GetEnumValuesAsync(NullLogger, _versionContext, "UnknownEnum", CancellationToken.None));
+            await ApiReferenceTools.GetEnumValuesAsync(
+                indexer.Object, NullLogger, _versionContext, "UnknownEnum", CancellationToken.None));
 
         Assert.Contains("not found", ex.Message);
     }
 
-    [Theory]
-    [InlineData("AlignItems")]
-    [InlineData("alignitems")]
-    [InlineData("Justify")]
-    [InlineData("justify")]
-    public async Task GetEnumValuesAsync_WithLayoutEnums_ReturnsValues(string enumName)
-    {
-        // Act
-        var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, enumName, CancellationToken.None);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Contains("Enum Values", result);
-        Assert.Contains("Center", result);
-    }
-
     [Fact]
-    public async Task GetEnumValuesAsync_UsageExample_ShowsCorrectEnumSyntax()
+    public async Task GetEnumValuesAsync_WithNonEnumType_ThrowsMcpException()
     {
-        // Act - For any enum, the usage example should show EnumType.Value syntax
-        var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, "AlignItems", CancellationToken.None);
+        // Arrange - a class type must not be served as an enum
+        var indexer = CreateMockIndexer();
 
-        // Assert - Usage example must show the enum type prefix (e.g., AlignItems.Center)
-        Assert.Contains("Usage Example", result);
-        Assert.Contains("AlignItems.", result);
-    }
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(async () =>
+            await ApiReferenceTools.GetEnumValuesAsync(
+                indexer, NullLogger, _versionContext, "MudButton", CancellationToken.None));
 
-    [Theory]
-    [InlineData("Color", "Color.")]
-    [InlineData("Size", "Size.")]
-    [InlineData("Variant", "Variant.")]
-    [InlineData("AlignItems", "AlignItems.")]
-    [InlineData("Justify", "Justify.")]
-    public async Task GetEnumValuesAsync_UsageExample_ShowsEnumTypePrefix(string enumName, string expectedPrefix)
-    {
-        // Act
-        var result = await ApiReferenceTools.GetEnumValuesAsync(
-            NullLogger, _versionContext, enumName, CancellationToken.None);
-
-        // Assert - Usage example must show the correct enum type prefix
-        Assert.Contains(expectedPrefix, result);
+        Assert.Contains("not found", ex.Message);
     }
 
     #endregion
@@ -225,6 +189,22 @@ public class ApiReferenceToolsTests
         Assert.Contains("Color", result);
     }
 
+    [Fact]
+    public async Task GetApiReferenceAsync_WithEnumKind_RendersValues()
+    {
+        // Arrange
+        var indexer = CreateEnumIndexer();
+
+        // Act
+        var result = await ApiReferenceTools.GetApiReferenceAsync(
+            indexer, NullLogger, _versionContext, "Color", "all", CancellationToken.None);
+
+        // Assert - enums render their values, not empty member tables
+        Assert.Contains("## Values", result);
+        Assert.Contains("Primary", result);
+        Assert.DoesNotContain("## Properties", result);
+    }
+
     #endregion
 
     private static IComponentIndexer CreateMockIndexer()
@@ -246,6 +226,30 @@ public class ApiReferenceToolsTests
 
         indexer.Setup(x => x.GetApiReferenceAsync("MudButton", It.IsAny<CancellationToken>()))
             .ReturnsAsync(apiReference);
+
+        return indexer.Object;
+    }
+
+    private static IComponentIndexer CreateEnumIndexer()
+    {
+        var indexer = new Mock<IComponentIndexer>();
+
+        var colorEnum = new ApiReference(
+            TypeName: "Color",
+            Namespace: "MudBlazor",
+            Summary: "Theme colors.",
+            BaseType: null,
+            Members: null,
+            Kind: "enum",
+            EnumValues: [
+                new EnumValue("Primary", "1", "Primary theme color"),
+                new EnumValue("Secondary", "2", "Secondary theme color"),
+                new EnumValue("Success", "4", "Success green color"),
+                new EnumValue("Error", "5", "Error red color")
+            ]);
+
+        indexer.Setup(x => x.GetApiReferenceAsync("Color", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(colorEnum);
 
         return indexer.Object;
     }

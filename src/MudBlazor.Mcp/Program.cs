@@ -305,6 +305,7 @@ public class IndexerHealthCheck : IHealthCheck
 
             var components = await _indexer.GetAllComponentsAsync(cancellationToken);
             var categories = await _indexer.GetCategoriesAsync(cancellationToken);
+            var failures = _indexer.FailureStatistics;
 
             if (components.Count == 0)
             {
@@ -317,6 +318,28 @@ public class IndexerHealthCheck : IHealthCheck
                         ["componentCount"] = 0,
                         ["categoryCount"] = categories.Count,
                         ["isIndexed"] = true,
+                        ["parseFailureCount"] = failures.Total,
+                        ["lastIndexed"] = _indexer.LastIndexed?.ToString("O") ?? "never"
+                    });
+            }
+
+            if (failures.Total > 0)
+            {
+                _logger.LogWarning(
+                    "Indexer health check: index built with {FailureCount} parse failures", failures.Total);
+                return HealthCheckResult.Degraded(
+                    $"Index contains {components.Count} components, but {failures.Total} source files failed to parse. Results may be incomplete.",
+                    data: new Dictionary<string, object>
+                    {
+                        ["status"] = "partial",
+                        ["componentCount"] = components.Count,
+                        ["categoryCount"] = categories.Count,
+                        ["isIndexed"] = true,
+                        ["parseFailureCount"] = failures.Total,
+                        ["componentParseFailures"] = failures.ComponentParseFailures,
+                        ["documentationParseFailures"] = failures.DocumentationParseFailures,
+                        ["exampleExtractionFailures"] = failures.ExampleExtractionFailures,
+                        ["enumParseFailures"] = failures.EnumParseFailures,
                         ["lastIndexed"] = _indexer.LastIndexed?.ToString("O") ?? "never"
                     });
             }
@@ -330,6 +353,7 @@ public class IndexerHealthCheck : IHealthCheck
                     ["componentCount"] = components.Count,
                     ["categoryCount"] = categories.Count,
                     ["isIndexed"] = true,
+                    ["parseFailureCount"] = 0,
                     ["lastIndexed"] = _indexer.LastIndexed?.ToString("O") ?? "never"
                 });
         }

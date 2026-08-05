@@ -70,6 +70,18 @@ public sealed class ComponentDetailTools
         {
             sb.AppendLine($"**Base Type:** `{component.BaseType}`");
         }
+
+        if (component.IsDeprecated)
+        {
+            sb.AppendLine();
+            sb.AppendLine("> **Deprecated:** This component is marked `[Obsolete]` in the MudBlazor source.");
+        }
+
+        if (component.IsInternal)
+        {
+            sb.AppendLine();
+            sb.AppendLine("> **Internal:** This component is declared `internal` and is not part of MudBlazor's public API.");
+        }
         
         sb.AppendLine();
 
@@ -143,6 +155,68 @@ public sealed class ComponentDetailTools
                     sb.AppendLine();
                     sb.AppendLine(method.Description);
                 }
+                sb.AppendLine();
+            }
+        }
+
+        // Inherited members (walked through the base type chain in the API reference index)
+        if (effectiveIncludeInherited)
+        {
+            var inheritedMembers = await CollectInheritedMembersAsync(indexer, component, cancellationToken);
+
+            var inheritedProps = inheritedMembers.Where(m => m.Member.MemberType == "Property").ToList();
+            var inheritedEvents = inheritedMembers.Where(m => m.Member.MemberType == "Event").ToList();
+            var inheritedMethods = inheritedMembers.Where(m => m.Member.MemberType == "Method").ToList();
+
+            if (inheritedProps.Count > 0)
+            {
+                sb.AppendLine("## Inherited Parameters");
+                sb.AppendLine();
+                sb.AppendLine("| Parameter | Type | Inherited From | Description |");
+                sb.AppendLine("|-----------|------|----------------|-------------|");
+
+                foreach (var (member, declaringType) in inheritedProps.OrderBy(m => m.Member.Name))
+                {
+                    sb.AppendLine($"| `{member.Name}` | `{member.ReturnType}` | `{declaringType}` | {TruncateText(member.Description, 60)} |");
+                }
+                sb.AppendLine();
+            }
+
+            if (inheritedEvents.Count > 0)
+            {
+                sb.AppendLine("## Inherited Events");
+                sb.AppendLine();
+                sb.AppendLine("| Event | Type | Inherited From | Description |");
+                sb.AppendLine("|-------|------|----------------|-------------|");
+
+                foreach (var (member, declaringType) in inheritedEvents.OrderBy(m => m.Member.Name))
+                {
+                    sb.AppendLine($"| `{member.Name}` | `{member.ReturnType}` | `{declaringType}` | {TruncateText(member.Description, 60)} |");
+                }
+                sb.AppendLine();
+            }
+
+            if (inheritedMethods.Count > 0)
+            {
+                sb.AppendLine("## Inherited Methods");
+                sb.AppendLine();
+
+                foreach (var (member, declaringType) in inheritedMethods.OrderBy(m => m.Member.Name))
+                {
+                    sb.AppendLine($"### `{member.ReturnType} {member.Name}({member.ParameterSignature})` *(from `{declaringType}`)*");
+
+                    if (!string.IsNullOrEmpty(member.Description))
+                    {
+                        sb.AppendLine();
+                        sb.AppendLine(member.Description);
+                    }
+                    sb.AppendLine();
+                }
+            }
+
+            if (inheritedMembers.Count == 0)
+            {
+                sb.AppendLine("*No inherited members found. The base type chain may not be part of the indexed MudBlazor source.*");
                 sb.AppendLine();
             }
         }
@@ -381,5 +455,75 @@ public sealed class ComponentDetailTools
             return text;
 
         return text[..(maxLength - 3)] + "...";
+    }
+
+    /// <summary>
+    /// An inherited member together with the base type that declares it.
+    /// </summary>
+    private sealed record InheritedMember(ApiMember Member, string DeclaringType);
+
+    /// <summary>
+    /// Walks the component's base type chain through the API reference index and collects
+    /// members that are not shadowed by the component itself or a more derived base type.
+    /// Methods are deduplicated by full signature so overloads survive; properties and
+    /// events are deduplicated by name (C# hiding/override semantics).
+    /// </summary>
+    private static async Task<IReadOnlyList<InheritedMember>> CollectInheritedMembersAsync(
+        IComponentIndexer indexer,
+        ComponentInfo component,
+        CancellationToken cancellationToken)
+    {
+        const int MaxDepth = 8;
+
+        var inherited = new List<InheritedMember>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Members declared on the component itself shadow inherited ones.
+        foreach (var param in component.Parameters)
+            seen.Add(MemberKey("Property", param.Name, null));
+        foreach (var evt in component.Events)
+            seen.Add(MemberKey("Event", evt.Name, null));
+        foreach (var method in component.Methods)
+            seen.Add(MemberKey("Method", method.Name,
+                string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))));
+
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { component.Name };
+        var baseName = StripGenericArguments(component.BaseType);
+
+        for (var depth = 0; depth < MaxDepth && baseName is not null && visited.Add(baseName); depth++)
+        {
+            var baseRef = await indexer.GetApiReferenceAsync(baseName, cancellationToken);
+            if (baseRef is null)
+            {
+                break;
+            }
+
+            foreach (var member in baseRef.Members ?? [])
+            {
+                if (seen.Add(MemberKey(member.MemberType, member.Name, member.ParameterSignature)))
+                {
+                    inherited.Add(new InheritedMember(member, baseRef.TypeName));
+                }
+            }
+
+            baseName = StripGenericArguments(baseRef.BaseType);
+        }
+
+        return inherited;
+    }
+
+    private static string MemberKey(string memberType, string name, string? parameterSignature) =>
+        memberType.Equals("Method", StringComparison.OrdinalIgnoreCase)
+            ? $"{memberType}:{name}({parameterSignature})"
+            : $"{memberType}:{name}";
+
+    /// <summary>
+    /// Strips generic type arguments from a type name (e.g. "MudBaseInput&lt;T&gt;" becomes "MudBaseInput").
+    /// </summary>
+    private static string? StripGenericArguments(string? typeName)
+    {
+        if (typeName is null) return null;
+        var index = typeName.IndexOf('<');
+        return index < 0 ? typeName : typeName[..index];
     }
 }

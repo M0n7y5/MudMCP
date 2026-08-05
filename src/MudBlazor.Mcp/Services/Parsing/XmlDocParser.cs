@@ -27,7 +27,9 @@ public sealed partial class XmlDocParser
     /// </summary>
     /// <param name="filePath">The path to the C# source file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The parse result, or null if parsing failed.</returns>
+    /// <returns>The parse result, or null if the file doesn't exist or contains no component class.</returns>
+    /// <exception cref="IOException">The file could not be read.</exception>
+    /// <exception cref="UnauthorizedAccessException">Access to the file was denied.</exception>
     public async Task<ComponentParseResult?> ParseComponentFileAsync(
         string filePath,
         CancellationToken cancellationToken = default)
@@ -40,26 +42,8 @@ public sealed partial class XmlDocParser
             return null;
         }
 
-        try
-        {
-            var sourceCode = await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false);
-            return ParseSourceCode(sourceCode, filePath);
-        }
-        catch (IOException ex)
-        {
-            _logger.LogError(ex, "IO error reading file: {FilePath}", filePath);
-            return null;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            _logger.LogError(ex, "Access denied reading file: {FilePath}", filePath);
-            return null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "Failed to parse file: {FilePath}", filePath);
-            return null;
-        }
+        var sourceCode = await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+        return ParseSourceCode(sourceCode, filePath);
     }
 
     /// <summary>
@@ -67,7 +51,7 @@ public sealed partial class XmlDocParser
     /// </summary>
     /// <param name="sourceCode">The C# source code to parse.</param>
     /// <param name="filePath">The file path for reference.</param>
-    /// <returns>The parse result, or null if no public class was found.</returns>
+    /// <returns>The parse result, or null if no public or internal class was found.</returns>
     public ComponentParseResult? ParseSourceCode(string sourceCode, string filePath)
     {
         ArgumentNullException.ThrowIfNull(sourceCode);
@@ -76,14 +60,29 @@ public sealed partial class XmlDocParser
         var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode);
         var root = syntaxTree.GetRoot();
 
-        // Find the main class declaration
-        var classDeclaration = root.DescendantNodes()
+        // Prefer the first public class; fall back to the first internal class
+        // (explicit `internal` or default top-level accessibility) so that
+        // IncludeInternalComponents can surface internal components.
+        var classDeclarations = root.DescendantNodes()
             .OfType<ClassDeclarationSyntax>()
+            .ToList();
+
+        var classDeclaration = classDeclarations
             .FirstOrDefault(c => c.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)));
+        var isInternal = false;
 
         if (classDeclaration is null)
         {
-            _logger.LogDebug("No public class found in: {FilePath}", filePath);
+            classDeclaration = classDeclarations.FirstOrDefault(c =>
+                !c.Modifiers.Any(m => m.IsKind(SyntaxKind.PrivateKeyword)
+                    || m.IsKind(SyntaxKind.ProtectedKeyword)
+                    || m.IsKind(SyntaxKind.FileKeyword)));
+            isInternal = classDeclaration is not null;
+        }
+
+        if (classDeclaration is null)
+        {
+            _logger.LogDebug("No public or internal class found in: {FilePath}", filePath);
             return null;
         }
 
@@ -104,46 +103,51 @@ public sealed partial class XmlDocParser
             BaseType = baseType,
             Parameters = parameters,
             Events = events,
-            Methods = methods
+            Methods = methods,
+            IsDeprecated = HasObsoleteAttribute(classDeclaration),
+            IsInternal = isInternal
         };
     }
 
     /// <summary>
-    /// Parses an enum type and extracts its values.
+    /// Parses a C# source file and extracts every enum declared in it.
     /// </summary>
     /// <param name="filePath">The path to the enum source file.</param>
-    /// <returns>The enum parse result, or null if the file doesn't exist or contains no enum.</returns>
-    public EnumParseResult? ParseEnumFile(string filePath)
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>All enums declared in the file; empty if the file doesn't exist or contains none.</returns>
+    public async Task<IReadOnlyList<EnumParseResult>> ParseEnumFileAsync(
+        string filePath,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
         if (!File.Exists(filePath))
-            return null;
+            return [];
 
-        var sourceCode = File.ReadAllText(filePath);
-        var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode);
-        var root = syntaxTree.GetRoot();
+        var sourceCode = await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+        var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode, cancellationToken: cancellationToken);
+        var root = syntaxTree.GetRoot(cancellationToken);
+        var namespaceName = ExtractNamespace(root);
 
-        var enumDeclaration = root.DescendantNodes()
-            .OfType<EnumDeclarationSyntax>()
-            .FirstOrDefault();
-
-        if (enumDeclaration is null)
-            return null;
-
-        var values = enumDeclaration.Members.Select(m => new EnumValue(
-            Name: m.Identifier.Text,
-            Value: m.EqualsValue?.Value.ToString(),
-            Description: ExtractSummaryFromTrivia(m)
-        )).ToList();
-
-        return new EnumParseResult
+        var results = new List<EnumParseResult>();
+        foreach (var enumDeclaration in root.DescendantNodes().OfType<EnumDeclarationSyntax>())
         {
-            EnumName = enumDeclaration.Identifier.Text,
-            Namespace = ExtractNamespace(root),
-            Values = values,
-            Summary = ExtractSummaryFromTrivia(enumDeclaration)
-        };
+            var values = enumDeclaration.Members.Select(m => new EnumValue(
+                Name: m.Identifier.Text,
+                Value: m.EqualsValue?.Value.ToString(),
+                Description: ExtractSummaryFromTrivia(m)
+            )).ToList();
+
+            results.Add(new EnumParseResult
+            {
+                EnumName = enumDeclaration.Identifier.Text,
+                Namespace = namespaceName,
+                Values = values,
+                Summary = ExtractSummaryFromTrivia(enumDeclaration)
+            });
+        }
+
+        return results;
     }
 
     private XmlDocumentation ExtractXmlDocumentation(MemberDeclarationSyntax member)
@@ -217,8 +221,14 @@ public sealed partial class XmlDocParser
             if (!hasParameterAttribute)
                 continue;
 
-            var xmlDoc = ExtractXmlDocumentation(property);
             var typeName = property.Type.ToString();
+
+            // EventCallback properties are surfaced exclusively as events (see ExtractEvents)
+            // so a callback never appears twice in the component surface.
+            if (IsEventCallbackType(typeName))
+                continue;
+
+            var xmlDoc = ExtractXmlDocumentation(property);
             var defaultValue = property.Initializer?.Value.ToString();
 
             parameters.Add(new ComponentParameter(
@@ -242,9 +252,9 @@ public sealed partial class XmlDocParser
         foreach (var property in classDeclaration.Members.OfType<PropertyDeclarationSyntax>())
         {
             var typeName = property.Type.ToString();
-            
+
             // Check if it's an EventCallback
-            if (!typeName.StartsWith("EventCallback"))
+            if (!IsEventCallbackType(typeName))
                 continue;
 
             var hasParameterAttribute = property.AttributeLists
@@ -361,6 +371,18 @@ public sealed partial class XmlDocParser
         return null;
     }
 
+    /// <summary>
+    /// Returns whether a property type is an <c>EventCallback</c> or <c>EventCallback&lt;T&gt;</c>.
+    /// </summary>
+    private static bool IsEventCallbackType(string typeName) =>
+        typeName == "EventCallback" || typeName.StartsWith("EventCallback<", StringComparison.Ordinal);
+
+    private static bool HasObsoleteAttribute(MemberDeclarationSyntax member) =>
+        member.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Any(a => a.Name.ToString() is "Obsolete" or "ObsoleteAttribute"
+                or "System.Obsolete" or "System.ObsoleteAttribute");
+
     private static string? ExtractGenericArgument(string typeName)
     {
         var match = GenericArgumentRegex().Match(typeName);
@@ -394,6 +416,8 @@ public record ComponentParseResult
     public List<ComponentParameter> Parameters { get; init; } = [];
     public List<ComponentEvent> Events { get; init; } = [];
     public List<ComponentMethod> Methods { get; init; } = [];
+    public bool IsDeprecated { get; init; }
+    public bool IsInternal { get; init; }
 }
 
 /// <summary>

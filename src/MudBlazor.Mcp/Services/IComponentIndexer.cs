@@ -21,6 +21,11 @@ public interface IComponentIndexer
     DateTimeOffset? LastIndexed { get; }
 
     /// <summary>
+    /// Gets counts of parse and extraction failures observed while building the current index.
+    /// </summary>
+    IndexFailureStatistics FailureStatistics { get; }
+
+    /// <summary>
     /// Builds or rebuilds the component index from the repository.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -87,6 +92,24 @@ public interface IComponentIndexer
         string componentName,
         RelationshipType relationshipType = RelationshipType.All,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Counts of parse and extraction failures from an index build.
+/// </summary>
+/// <param name="ComponentParseFailures">Component source files that failed to parse.</param>
+/// <param name="DocumentationParseFailures">Documentation pages that failed to parse.</param>
+/// <param name="ExampleExtractionFailures">Components whose example extraction failed.</param>
+/// <param name="EnumParseFailures">Enum source files that failed to parse.</param>
+public sealed record IndexFailureStatistics(
+    int ComponentParseFailures,
+    int DocumentationParseFailures,
+    int ExampleExtractionFailures,
+    int EnumParseFailures)
+{
+    /// <summary>Total number of failures across all indexing stages.</summary>
+    public int Total => ComponentParseFailures + DocumentationParseFailures
+        + ExampleExtractionFailures + EnumParseFailures;
 }
 
 /// <summary>

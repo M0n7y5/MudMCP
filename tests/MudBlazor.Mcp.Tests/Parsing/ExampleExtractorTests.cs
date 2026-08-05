@@ -198,10 +198,11 @@ public class ExampleExtractorTests : IDisposable
             """);
 
         // Act - pass "MudCheckBox" which strips to "CheckBox" (capital B)
-        var examples = await _extractor.ExtractExamplesAsync(tempDir, "MudCheckBox", CancellationToken.None);
+        var result = await _extractor.ExtractExamplesAsync(tempDir, "MudCheckBox", CancellationToken.None);
 
         // Assert - should find the example despite casing mismatch
-        Assert.Single(examples);
+        Assert.Single(result.Examples);
+        Assert.Equal(0, result.FailureCount);
     }
 
     [Fact]
@@ -219,9 +220,49 @@ public class ExampleExtractorTests : IDisposable
             """);
 
         // Act
-        var examples = await _extractor.ExtractExamplesAsync(tempDir, "MudButton", CancellationToken.None);
+        var result = await _extractor.ExtractExamplesAsync(tempDir, "MudButton", CancellationToken.None);
 
         // Assert
-        Assert.Single(examples);
+        Assert.Single(result.Examples);
+        Assert.Equal(0, result.FailureCount);
+    }
+
+    [Fact]
+    public async Task ExtractExamplesAsync_WithUnreadableExampleFile_CountsFailureAndKeepsPartialResults()
+    {
+        // File permission-based failure injection requires POSIX permissions.
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        // Arrange - one readable and one unreadable example file
+        var tempDir = Path.Combine(Path.GetTempPath(), $"mudmcp-test-{Guid.NewGuid():N}");
+        _tempDirs.Add(tempDir);
+
+        var exampleDir = Path.Combine(tempDir, "Pages", "Components", "Button");
+        Directory.CreateDirectory(exampleDir);
+
+        await File.WriteAllTextAsync(Path.Combine(exampleDir, "ButtonBasicExample.razor"),
+            "<MudButton>Click</MudButton>");
+
+        var unreadablePath = Path.Combine(exampleDir, "ButtonBrokenExample.razor");
+        await File.WriteAllTextAsync(unreadablePath, "<MudButton>Broken</MudButton>");
+        File.SetUnixFileMode(unreadablePath, UnixFileMode.None);
+
+        try
+        {
+            // Act - failure goes through the real file-read boundary
+            var result = await _extractor.ExtractExamplesAsync(tempDir, "MudButton", CancellationToken.None);
+
+            // Assert - partial results are kept and the failure is reported
+            Assert.Single(result.Examples);
+            Assert.Equal(1, result.FailureCount);
+        }
+        finally
+        {
+            // Restore permissions so Dispose can delete the directory.
+            File.SetUnixFileMode(unreadablePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 }

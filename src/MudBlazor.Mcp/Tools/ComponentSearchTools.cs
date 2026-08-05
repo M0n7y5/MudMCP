@@ -207,7 +207,8 @@ public sealed class ComponentSearchTools
         }
 
         var relationship = ParseRelationshipType(effectiveRelationshipType);
-        var related = await indexer.GetRelatedComponentsAsync(componentName, relationship, cancellationToken);
+        // Pass the resolved canonical name so flexible lookups ("Button") match the index ("MudButton").
+        var related = await indexer.GetRelatedComponentsAsync(component.Name, relationship, cancellationToken);
 
         logger.LogDebug("Found {Count} related components for {ComponentName}", related.Count, componentName);
 

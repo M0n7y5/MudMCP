@@ -19,6 +19,8 @@ namespace MudBlazor.Mcp.Models;
 /// <param name="RelatedComponents">Related components.</param>
 /// <param name="DocumentationUrl">URL to the component's documentation page.</param>
 /// <param name="SourceUrl">URL to the component's source code.</param>
+/// <param name="IsDeprecated">Whether the component is marked with <c>[Obsolete]</c>.</param>
+/// <param name="IsInternal">Whether the component class is declared <c>internal</c>.</param>
 public sealed record ComponentInfo(
     string Name,
     string Namespace,
@@ -32,7 +34,9 @@ public sealed record ComponentInfo(
     IReadOnlyList<ComponentExample> Examples,
     IReadOnlyList<string> RelatedComponents,
     string? DocumentationUrl,
-    string? SourceUrl
+    string? SourceUrl,
+    bool IsDeprecated = false,
+    bool IsInternal = false
 )
 {
     /// <summary>

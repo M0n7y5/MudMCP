@@ -25,8 +25,8 @@ public sealed partial class ExampleExtractor
     /// <param name="docsPath">The path to the documentation folder.</param>
     /// <param name="componentName">The component name to extract examples for.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A list of component examples.</returns>
-    public async Task<List<ComponentExample>> ExtractExamplesAsync(
+    /// <returns>The extracted examples together with the number of failures encountered.</returns>
+    public async Task<ExampleExtractionResult> ExtractExamplesAsync(
         string docsPath,
         string componentName,
         CancellationToken cancellationToken = default)
@@ -35,6 +35,7 @@ public sealed partial class ExampleExtractor
         ArgumentException.ThrowIfNullOrWhiteSpace(componentName);
 
         var examples = new List<ComponentExample>();
+        var failureCount = 0;
 
         // Component examples are typically in: Docs/Pages/Components/{ComponentName}/{ComponentName}*Example.razor
         // The folder name is usually the component name without "Mud" prefix
@@ -61,14 +62,14 @@ public sealed partial class ExampleExtractor
                 _logger.LogWarning(ex,
                     "Failed to enumerate directories under {ParentDir} due to insufficient access while resolving docs folder for component {ComponentName}. Returning no examples.",
                     parentDir, componentName);
-                return examples;
+                return new ExampleExtractionResult(examples, 1);
             }
             catch (IOException ex)
             {
                 _logger.LogWarning(ex,
                     "I/O error while enumerating directories under {ParentDir} when resolving docs folder for component {ComponentName}. Returning no examples.",
                     parentDir, componentName);
-                return examples;
+                return new ExampleExtractionResult(examples, 1);
             }
         }
 
@@ -76,7 +77,7 @@ public sealed partial class ExampleExtractor
         {
             _logger.LogDebug("No docs folder found for component {ComponentName} at {Path}", 
                 componentName, componentDocsPath);
-            return examples;
+            return new ExampleExtractionResult(examples, 0);
         }
 
         // Find all example files
@@ -88,12 +89,12 @@ public sealed partial class ExampleExtractor
         catch (UnauthorizedAccessException ex)
         {
             _logger.LogWarning(ex, "Access denied to docs folder: {Path}", componentDocsPath);
-            return examples;
+            return new ExampleExtractionResult(examples, 1);
         }
         catch (IOException ex)
         {
             _logger.LogWarning(ex, "IO error accessing docs folder: {Path}", componentDocsPath);
-            return examples;
+            return new ExampleExtractionResult(examples, 1);
         }
 
         foreach (var filePath in exampleFiles)
@@ -110,20 +111,24 @@ public sealed partial class ExampleExtractor
             }
             catch (IOException ex)
             {
+                failureCount++;
                 _logger.LogWarning(ex, "IO error reading example file: {FilePath}", filePath);
             }
             catch (UnauthorizedAccessException ex)
             {
+                failureCount++;
                 _logger.LogWarning(ex, "Access denied reading example file: {FilePath}", filePath);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                failureCount++;
                 _logger.LogWarning(ex, "Failed to parse example file: {FilePath}", filePath);
             }
         }
 
-        _logger.LogDebug("Found {Count} examples for {ComponentName}", examples.Count, componentName);
-        return examples;
+        _logger.LogDebug("Found {Count} examples for {ComponentName} ({Failures} failures)",
+            examples.Count, componentName, failureCount);
+        return new ExampleExtractionResult(examples, failureCount);
     }
 
     /// <summary>
@@ -329,3 +334,12 @@ public sealed partial class ExampleExtractor
     [GeneratedRegex(@"(\w+)=""[^""]*""")]
     private static partial Regex ParameterUsageRegex();
 }
+
+/// <summary>
+/// Result of extracting examples for a component.
+/// </summary>
+/// <param name="Examples">The successfully extracted examples (possibly partial).</param>
+/// <param name="FailureCount">The number of files or directories that failed to read or parse.</param>
+public sealed record ExampleExtractionResult(
+    List<ComponentExample> Examples,
+    int FailureCount);

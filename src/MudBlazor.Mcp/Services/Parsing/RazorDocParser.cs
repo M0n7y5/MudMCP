@@ -24,7 +24,9 @@ public sealed partial class RazorDocParser
     /// </summary>
     /// <param name="filePath">The path to the Razor documentation file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The parse result, or null if the file doesn't exist or parsing failed.</returns>
+    /// <returns>The parse result, or null if the file doesn't exist.</returns>
+    /// <exception cref="IOException">The file could not be read.</exception>
+    /// <exception cref="UnauthorizedAccessException">Access to the file was denied.</exception>
     public async Task<RazorDocResult?> ParseDocumentationFileAsync(
         string filePath,
         CancellationToken cancellationToken = default)
@@ -37,26 +39,8 @@ public sealed partial class RazorDocParser
             return null;
         }
 
-        try
-        {
-            var content = await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false);
-            return ParseDocumentation(content, filePath);
-        }
-        catch (IOException ex)
-        {
-            _logger.LogError(ex, "IO error reading documentation file: {FilePath}", filePath);
-            return null;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            _logger.LogError(ex, "Access denied reading documentation file: {FilePath}", filePath);
-            return null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "Failed to parse documentation file: {FilePath}", filePath);
-            return null;
-        }
+        var content = await File.ReadAllTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+        return ParseDocumentation(content, filePath);
     }
 
     /// <summary>

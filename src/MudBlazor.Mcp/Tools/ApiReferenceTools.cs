@@ -72,6 +72,26 @@ public sealed class ApiReferenceTools
             sb.AppendLine();
         }
 
+        // Enums have values instead of members
+        if (apiRef.Kind.Equals("enum", StringComparison.OrdinalIgnoreCase))
+        {
+            var values = apiRef.EnumValues ?? [];
+
+            sb.AppendLine("## Values");
+            sb.AppendLine();
+            sb.AppendLine("| Value | Description |");
+            sb.AppendLine("|-------|-------------|");
+
+            foreach (var value in values)
+            {
+                sb.AppendLine($"| `{value.Name}` | {TruncateText(value.Description, 100)} |");
+            }
+            sb.AppendLine();
+            sb.AppendLine($"Use `get_enum_values` for usage examples. **Values:** {values.Count}");
+
+            return sb.ToString();
+        }
+
         // Filter members
         var members = apiRef.Members ?? [];
         if (!effectiveMemberType.Equals("all", StringComparison.OrdinalIgnoreCase))
@@ -160,8 +180,9 @@ public sealed class ApiReferenceTools
     /// Gets enum values for a MudBlazor enum type.
     /// </summary>
     [McpServerTool(Name = "get_enum_values")]
-    [Description("Gets all values for a MudBlazor enum type (e.g., Color, Size, Variant). Results are for the configured MudBlazor version. If a component seems missing, verify the --version matches your project's MudBlazor PackageReference in the .csproj file.")]
+    [Description("Gets all values for a MudBlazor enum type (e.g., Color, Size, Variant). Results are parsed from the configured MudBlazor version's source. If an enum seems missing, verify the --version matches your project's MudBlazor PackageReference in the .csproj file.")]
     public static async Task<string> GetEnumValuesAsync(
+        IComponentIndexer indexer,
         ILogger<ApiReferenceTools> logger,
         VersionContext versionContext,
         [Description("The enum name (e.g., 'Color', 'Size', 'Variant', 'Align')")]
@@ -172,155 +193,46 @@ public sealed class ApiReferenceTools
 
         logger.LogDebug("Getting enum values for: {EnumName}", enumName);
 
-        // Common MudBlazor enums with their values
-        var enumValues = GetKnownEnumValues(enumName);
-        
-        if (enumValues is null)
+        var apiRef = await indexer.GetApiReferenceAsync(enumName, cancellationToken);
+
+        if (apiRef is null
+            || !apiRef.Kind.Equals("enum", StringComparison.OrdinalIgnoreCase)
+            || apiRef.EnumValues is null
+            || apiRef.EnumValues.Count == 0)
         {
             logger.LogWarning("Enum not found: {EnumName}", enumName);
             ToolValidation.ThrowTypeNotFound(enumName);
         }
 
+        var enumValues = apiRef.EnumValues;
         logger.LogDebug("Found {Count} values for enum {EnumName}", enumValues.Count, enumName);
 
         var sb = new StringBuilder();
-        sb.AppendLine($"# {enumName} Enum Values (v{versionContext.Version})");
+        sb.AppendLine($"# {apiRef.TypeName} Enum Values (v{versionContext.Version})");
         sb.AppendLine();
+
+        if (!string.IsNullOrEmpty(apiRef.Summary))
+        {
+            sb.AppendLine(apiRef.Summary);
+            sb.AppendLine();
+        }
+
         sb.AppendLine("| Value | Description |");
         sb.AppendLine("|-------|-------------|");
-        
-        foreach (var (value, description) in enumValues)
+
+        foreach (var value in enumValues)
         {
-            sb.AppendLine($"| `{value}` | {description} |");
+            sb.AppendLine($"| `{value.Name}` | {TruncateText(value.Description, 100)} |");
         }
         sb.AppendLine();
-        
+
         sb.AppendLine("## Usage Example");
         sb.AppendLine();
         sb.AppendLine($"```razor");
-        sb.AppendLine($"<MudComponent {enumName}=\"{enumName}.{enumValues[0].Value}\" />");
+        sb.AppendLine($"<MudComponent {apiRef.TypeName}=\"{apiRef.TypeName}.{enumValues[0].Name}\" />");
         sb.AppendLine($"```");
 
         return sb.ToString();
-    }
-
-    private static List<(string Value, string Description)>? GetKnownEnumValues(string enumName)
-    {
-        return enumName.ToLowerInvariant() switch
-        {
-            "color" => [
-                ("Default", "Default theme color"),
-                ("Primary", "Primary theme color (usually blue)"),
-                ("Secondary", "Secondary theme color"),
-                ("Tertiary", "Tertiary theme color"),
-                ("Info", "Informational blue color"),
-                ("Success", "Success green color"),
-                ("Warning", "Warning yellow/orange color"),
-                ("Error", "Error red color"),
-                ("Dark", "Dark color"),
-                ("Transparent", "Transparent (no color)"),
-                ("Inherit", "Inherit color from parent"),
-                ("Surface", "Surface background color")
-            ],
-            "size" => [
-                ("Small", "Small size"),
-                ("Medium", "Medium size (default)"),
-                ("Large", "Large size")
-            ],
-            "variant" => [
-                ("Text", "Text-only variant with no background"),
-                ("Filled", "Filled variant with solid background"),
-                ("Outlined", "Outlined variant with border only")
-            ],
-            "align" => [
-                ("Start", "Align to start (left in LTR)"),
-                ("Center", "Align to center"),
-                ("End", "Align to end (right in LTR)"),
-                ("Justify", "Justify content")
-            ],
-            "position" => [
-                ("Top", "Position at top"),
-                ("Right", "Position at right"),
-                ("Bottom", "Position at bottom"),
-                ("Left", "Position at left")
-            ],
-            "placement" => [
-                ("Top", "Place at top"),
-                ("Bottom", "Place at bottom"),
-                ("Left", "Place at left"),
-                ("Right", "Place at right"),
-                ("Start", "Place at start"),
-                ("End", "Place at end")
-            ],
-            "typo" => [
-                ("h1", "Heading 1 (largest)"),
-                ("h2", "Heading 2"),
-                ("h3", "Heading 3"),
-                ("h4", "Heading 4"),
-                ("h5", "Heading 5"),
-                ("h6", "Heading 6 (smallest heading)"),
-                ("subtitle1", "Subtitle 1"),
-                ("subtitle2", "Subtitle 2"),
-                ("body1", "Body 1 text"),
-                ("body2", "Body 2 text"),
-                ("button", "Button text style"),
-                ("caption", "Caption text style"),
-                ("overline", "Overline text style")
-            ],
-            "edge" => [
-                ("False", "No edge positioning"),
-                ("Start", "Edge start position"),
-                ("End", "Edge end position")
-            ],
-            "origin" => [
-                ("TopLeft", "Origin at top left"),
-                ("TopCenter", "Origin at top center"),
-                ("TopRight", "Origin at top right"),
-                ("CenterLeft", "Origin at center left"),
-                ("CenterCenter", "Origin at center"),
-                ("CenterRight", "Origin at center right"),
-                ("BottomLeft", "Origin at bottom left"),
-                ("BottomCenter", "Origin at bottom center"),
-                ("BottomRight", "Origin at bottom right")
-            ],
-            "adornment" => [
-                ("None", "No adornment"),
-                ("Start", "Adornment at start"),
-                ("End", "Adornment at end")
-            ],
-            "inputtype" => [
-                ("Text", "Standard text input"),
-                ("Password", "Password input (masked)"),
-                ("Email", "Email input with validation"),
-                ("Number", "Numeric input"),
-                ("Telephone", "Telephone number input"),
-                ("Search", "Search input"),
-                ("Url", "URL input"),
-                ("Date", "Date input"),
-                ("Time", "Time input"),
-                ("DateTimeLocal", "Local date/time input"),
-                ("Month", "Month input"),
-                ("Week", "Week input"),
-                ("Color", "Color picker input"),
-                ("Hidden", "Hidden input")
-            ],
-            "alignitems" => [
-                ("Baseline", "Align items to their baseline"),
-                ("Center", "Center items along the cross axis"),
-                ("Start", "Align items to the start of the cross axis"),
-                ("End", "Align items to the end of the cross axis"),
-                ("Stretch", "Stretch items to fill the container (default)")
-            ],
-            "justify" => [
-                ("FlexStart", "Pack items toward the start"),
-                ("Center", "Pack items around the center"),
-                ("FlexEnd", "Pack items toward the end"),
-                ("SpaceBetween", "Distribute items evenly, first at start, last at end"),
-                ("SpaceAround", "Distribute items evenly with equal space around them"),
-                ("SpaceEvenly", "Distribute items evenly with equal space between them")
-            ],
-            _ => null
-        };
     }
 
     private static string TruncateText(string? text, int maxLength)

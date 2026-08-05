@@ -2,6 +2,7 @@
 // Licensed under the GNU General Public License v2.0. See LICENSE file in the project root for full license information.
 
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -34,9 +35,19 @@ public sealed class ComponentIndexer : IComponentIndexer
     
     private bool _isIndexed;
     private DateTimeOffset? _lastIndexed;
+    private int _componentParseFailures;
+    private int _documentationParseFailures;
+    private int _exampleExtractionFailures;
+    private int _enumParseFailures;
 
     public bool IsIndexed => _isIndexed;
     public DateTimeOffset? LastIndexed => _lastIndexed;
+
+    public IndexFailureStatistics FailureStatistics => new(
+        _componentParseFailures,
+        _documentationParseFailures,
+        _exampleExtractionFailures,
+        _enumParseFailures);
 
     public ComponentIndexer(
         IGitRepositoryService gitService,
@@ -89,6 +100,10 @@ public sealed class ComponentIndexer : IComponentIndexer
             // removed components/API refs from a previous run don't leak into the new index.
             _components.Clear();
             _apiReferences.Clear();
+            _componentParseFailures = 0;
+            _documentationParseFailures = 0;
+            _exampleExtractionFailures = 0;
+            _enumParseFailures = 0;
 
             await _gitService.EnsureRepositoryAsync(cancellationToken).ConfigureAwait(false);
 
@@ -101,6 +116,8 @@ public sealed class ComponentIndexer : IComponentIndexer
 
             await _categoryMapper.InitializeAsync(repoPath, cancellationToken).ConfigureAwait(false);
             await IndexComponentsAsync(repoPath, cancellationToken).ConfigureAwait(false);
+            await IndexBaseTypesAsync(repoPath, cancellationToken).ConfigureAwait(false);
+            await IndexEnumsAsync(repoPath, cancellationToken).ConfigureAwait(false);
             await IndexDocumentationAsync(repoPath, cancellationToken).ConfigureAwait(false);
             await IndexExamplesAsync(repoPath, cancellationToken).ConfigureAwait(false);
 
@@ -125,7 +142,7 @@ public sealed class ComponentIndexer : IComponentIndexer
     /// <see cref="CachedIndex"/> record structure changes or the serialization format
     /// is updated in a backward-incompatible way, so stale caches are automatically rebuilt.
     /// </summary>
-    private const int CacheSchemaVersion = 2;
+    private const int CacheSchemaVersion = 3;
 
     private async Task<bool> TryLoadCachedIndexAsync(CancellationToken cancellationToken)
     {
@@ -152,6 +169,11 @@ public sealed class ComponentIndexer : IComponentIndexer
             _components.Clear();
             foreach (var component in cached.Components)
                 _components[component.Name] = component;
+
+            _componentParseFailures = cached.ComponentParseFailures;
+            _documentationParseFailures = cached.DocumentationParseFailures;
+            _exampleExtractionFailures = cached.ExampleExtractionFailures;
+            _enumParseFailures = cached.EnumParseFailures;
 
             _apiReferences.Clear();
             foreach (var apiRef in cached.ApiReferences)
@@ -180,6 +202,10 @@ public sealed class ComponentIndexer : IComponentIndexer
                 _options.Parsing.IncludeInternalComponents,
                 _options.Parsing.IncludeDeprecatedComponents,
                 _options.Parsing.MaxExamplesPerComponent,
+                _componentParseFailures,
+                _documentationParseFailures,
+                _exampleExtractionFailures,
+                _enumParseFailures,
                 _components.Values.ToList(),
                 _apiReferences.Values.ToList());
 
@@ -223,6 +249,10 @@ public sealed class ComponentIndexer : IComponentIndexer
         bool IncludeInternalComponents,
         bool IncludeDeprecatedComponents,
         int MaxExamplesPerComponent,
+        int ComponentParseFailures,
+        int DocumentationParseFailures,
+        int ExampleExtractionFailures,
+        int EnumParseFailures,
         List<ComponentInfo> Components,
         List<ApiReference> ApiReferences);
 
@@ -241,6 +271,91 @@ public sealed class ComponentIndexer : IComponentIndexer
 
         var tasks = componentDirs.Select(dir => IndexComponentDirectoryAsync(dir, cancellationToken));
         await Task.WhenAll(tasks).ConfigureAwait(false);
+    }
+
+    private async Task IndexEnumsAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var enumsPath = Path.Combine(repoPath, "src", "MudBlazor", "Enums");
+
+        if (!Directory.Exists(enumsPath))
+        {
+            _logger.LogWarning("Enums directory not found: {Path}", enumsPath);
+            return;
+        }
+
+        var enumFiles = Directory.GetFiles(enumsPath, "*.cs", SearchOption.AllDirectories);
+        _logger.LogDebug("Found {Count} enum files", enumFiles.Length);
+
+        foreach (var file in enumFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                foreach (var parsed in await _xmlParser.ParseEnumFileAsync(file, cancellationToken).ConfigureAwait(false))
+                {
+                    _apiReferences[parsed.EnumName] = new ApiReference(
+                        TypeName: parsed.EnumName,
+                        Namespace: parsed.Namespace ?? "MudBlazor",
+                        Summary: parsed.Summary,
+                        BaseType: null,
+                        Members: null,
+                        Kind: "enum",
+                        EnumValues: parsed.Values);
+
+                    _logger.LogTrace("Indexed enum: {Name}", parsed.EnumName);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Interlocked.Increment(ref _enumParseFailures);
+                _logger.LogWarning(ex, "Failed to parse enum file: {File}", file);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Indexes component base classes (e.g. MudComponentBase, MudBaseInput) from src/MudBlazor/Base
+    /// into the API reference index so inherited-member walks can traverse the full chain.
+    /// Base classes are not surfaced as components; internal ones still shape the public
+    /// component surface through their [Parameter] properties, so accessibility is not filtered here.
+    /// </summary>
+    private async Task IndexBaseTypesAsync(string repoPath, CancellationToken cancellationToken)
+    {
+        var basePath = Path.Combine(repoPath, "src", "MudBlazor", "Base");
+
+        if (!Directory.Exists(basePath))
+        {
+            _logger.LogWarning("Base types directory not found: {Path}", basePath);
+            return;
+        }
+
+        var baseFiles = Directory.GetFiles(basePath, "*.cs", SearchOption.AllDirectories);
+        _logger.LogDebug("Found {Count} base type files", baseFiles.Length);
+
+        foreach (var file in baseFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var parseResult = await _xmlParser.ParseComponentFileAsync(file, cancellationToken).ConfigureAwait(false);
+
+                if (parseResult is null)
+                {
+                    continue;
+                }
+
+                // Components take precedence over base classes on name collisions.
+                _apiReferences.TryAdd(parseResult.ClassName, CreateApiReference(parseResult));
+                _logger.LogTrace("Indexed base type: {Name}", parseResult.ClassName);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Interlocked.Increment(ref _componentParseFailures);
+                _logger.LogWarning(ex, "Failed to parse base type file: {File}", file);
+            }
+        }
     }
 
     private async Task IndexComponentDirectoryAsync(string componentDir, CancellationToken cancellationToken)
@@ -272,9 +387,21 @@ public sealed class ComponentIndexer : IComponentIndexer
         try
         {
             var parseResult = await _xmlParser.ParseComponentFileAsync(filePath, cancellationToken).ConfigureAwait(false);
-            
+
             if (parseResult is null)
             {
+                return;
+            }
+
+            if (parseResult.IsInternal && !_options.Parsing.IncludeInternalComponents)
+            {
+                _logger.LogTrace("Skipping internal component {Name} (IncludeInternalComponents=false)", parseResult.ClassName);
+                return;
+            }
+
+            if (parseResult.IsDeprecated && !_options.Parsing.IncludeDeprecatedComponents)
+            {
+                _logger.LogTrace("Skipping deprecated component {Name} (IncludeDeprecatedComponents=false)", parseResult.ClassName);
                 return;
             }
 
@@ -295,7 +422,9 @@ public sealed class ComponentIndexer : IComponentIndexer
                 Examples: [],
                 RelatedComponents: [],
                 DocumentationUrl: $"https://mudblazor.com/components/{dirName.ToLowerInvariant()}",
-                SourceUrl: $"{TrimTrailingGitSuffix(_options.Repository.Url)}/tree/{_versionContext.Tag}/src/MudBlazor/Components/{dirName}"
+                SourceUrl: $"{TrimTrailingGitSuffix(_options.Repository.Url)}/tree/{_versionContext.Tag}/src/MudBlazor/Components/{dirName}",
+                IsDeprecated: parseResult.IsDeprecated,
+                IsInternal: parseResult.IsInternal
             );
 
             _components[componentName] = componentInfo;
@@ -306,14 +435,17 @@ public sealed class ComponentIndexer : IComponentIndexer
         }
         catch (IOException ex)
         {
+            Interlocked.Increment(ref _componentParseFailures);
             _logger.LogWarning(ex, "IO error indexing component in: {Dir}", dirName);
         }
         catch (UnauthorizedAccessException ex)
         {
+            Interlocked.Increment(ref _componentParseFailures);
             _logger.LogWarning(ex, "Access denied indexing component in: {Dir}", dirName);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Interlocked.Increment(ref _componentParseFailures);
             _logger.LogWarning(ex, "Failed to index component in: {Dir}", dirName);
         }
     }
@@ -406,14 +538,17 @@ public sealed class ComponentIndexer : IComponentIndexer
             }
             catch (IOException ex)
             {
+                Interlocked.Increment(ref _documentationParseFailures);
                 _logger.LogWarning(ex, "IO error parsing documentation file: {File}", docFile);
             }
             catch (UnauthorizedAccessException ex)
             {
+                Interlocked.Increment(ref _documentationParseFailures);
                 _logger.LogWarning(ex, "Access denied parsing documentation file: {File}", docFile);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                Interlocked.Increment(ref _documentationParseFailures);
                 _logger.LogWarning(ex, "Failed to parse documentation file: {File}", docFile);
             }
         }
@@ -429,24 +564,38 @@ public sealed class ComponentIndexer : IComponentIndexer
 
             try
             {
-                var examples = await _exampleExtractor.ExtractExamplesAsync(docsPath, componentName, cancellationToken).ConfigureAwait(false);
-                
-                if (examples.Count > 0)
+                var result = await _exampleExtractor.ExtractExamplesAsync(docsPath, componentName, cancellationToken).ConfigureAwait(false);
+
+                if (result.FailureCount > 0)
                 {
-                    var enhanced = component with { Examples = examples };
+                    Interlocked.Add(ref _exampleExtractionFailures, result.FailureCount);
+                }
+
+                if (result.Examples.Count > 0)
+                {
+                    // Honor the configured per-component example cap.
+                    var maxExamples = _options.Parsing.MaxExamplesPerComponent;
+                    var capped = maxExamples > 0 && result.Examples.Count > maxExamples
+                        ? result.Examples.Take(maxExamples).ToList()
+                        : result.Examples;
+
+                    var enhanced = component with { Examples = capped };
                     _components[componentName] = enhanced;
                 }
             }
             catch (IOException ex)
             {
+                Interlocked.Increment(ref _exampleExtractionFailures);
                 _logger.LogWarning(ex, "IO error extracting examples for: {Component}", componentName);
             }
             catch (UnauthorizedAccessException ex)
             {
+                Interlocked.Increment(ref _exampleExtractionFailures);
                 _logger.LogWarning(ex, "Access denied extracting examples for: {Component}", componentName);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                Interlocked.Increment(ref _exampleExtractionFailures);
                 _logger.LogWarning(ex, "Failed to extract examples for: {Component}", componentName);
             }
         }
@@ -463,23 +612,29 @@ public sealed class ComponentIndexer : IComponentIndexer
     public Task<ComponentInfo?> GetComponentAsync(string componentName, CancellationToken cancellationToken = default)
     {
         EnsureIndexed();
-        
+        return Task.FromResult(TryResolveComponent(componentName, out var component) ? component : null);
+    }
+
+    /// <summary>
+    /// Resolves a component by exact name or with the "Mud" prefix applied.
+    /// </summary>
+    private bool TryResolveComponent(string componentName, [NotNullWhen(true)] out ComponentInfo? component)
+    {
         // Try exact match first
-        if (_components.TryGetValue(componentName, out var component))
+        if (_components.TryGetValue(componentName, out component))
         {
-            return Task.FromResult<ComponentInfo?>(component);
+            return true;
         }
 
         // Try with "Mud" prefix
-        if (!componentName.StartsWith("Mud", StringComparison.OrdinalIgnoreCase))
+        if (!componentName.StartsWith("Mud", StringComparison.OrdinalIgnoreCase)
+            && _components.TryGetValue($"Mud{componentName}", out component))
         {
-            if (_components.TryGetValue($"Mud{componentName}", out component))
-            {
-                return Task.FromResult<ComponentInfo?>(component);
-            }
+            return true;
         }
 
-        return Task.FromResult<ComponentInfo?>(null);
+        component = null;
+        return false;
     }
 
     /// <inheritdoc />
@@ -579,12 +734,8 @@ public sealed class ComponentIndexer : IComponentIndexer
     {
         EnsureIndexed();
 
-        if (_components.TryGetValue(componentName, out var component))
-        {
-            return Task.FromResult<IReadOnlyList<ComponentExample>>(component.Examples);
-        }
-
-        return Task.FromResult<IReadOnlyList<ComponentExample>>([]);
+        return Task.FromResult<IReadOnlyList<ComponentExample>>(
+            TryResolveComponent(componentName, out var component) ? component.Examples : []);
     }
 
     /// <inheritdoc />
@@ -617,57 +768,65 @@ public sealed class ComponentIndexer : IComponentIndexer
     {
         EnsureIndexed();
 
-        if (!_components.TryGetValue(componentName, out var component))
+        if (!TryResolveComponent(componentName, out var component))
         {
             return Task.FromResult<IReadOnlyList<ComponentInfo>>([]);
         }
 
+        var canonicalName = component.Name;
         var related = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Add explicitly related components
-        foreach (var relatedName in component.RelatedComponents)
+        // Explicitly documented related components ("commonly used with")
+        if (relationshipType is RelationshipType.All or RelationshipType.CommonlyUsedWith)
         {
-            related.Add(relatedName);
+            foreach (var relatedName in component.RelatedComponents)
+            {
+                related.Add(relatedName);
+            }
         }
 
-        // Add components in same category (siblings)
+        // Components in same category (siblings)
         if (relationshipType is RelationshipType.All or RelationshipType.Sibling)
         {
             if (component.Category is not null)
             {
                 var categoryComponents = _categoryMapper.GetComponentsInCategory(component.Category);
-                foreach (var cat in categoryComponents.Where(c => !c.Equals(componentName, StringComparison.OrdinalIgnoreCase)))
+                foreach (var cat in categoryComponents.Where(c => !c.Equals(canonicalName, StringComparison.OrdinalIgnoreCase)))
                 {
                     related.Add(cat);
                 }
             }
         }
 
-        // Add parent (base type)
+        // Parent (base type); base types may carry generic arguments (e.g. MudBaseInput<T>)
         if (relationshipType is RelationshipType.All or RelationshipType.Parent)
         {
-            if (component.BaseType is not null && _components.ContainsKey(component.BaseType))
+            var baseName = StripGenericArguments(component.BaseType);
+            if (baseName is not null && _components.ContainsKey(baseName))
             {
-                related.Add(component.BaseType);
+                related.Add(baseName);
             }
         }
 
-        // Add children (components that inherit from this one)
+        // Children (components that inherit from this one)
         if (relationshipType is RelationshipType.All or RelationshipType.Child)
         {
             foreach (var (name, comp) in _components)
             {
-                if (comp.BaseType?.Equals(componentName, StringComparison.OrdinalIgnoreCase) == true)
+                if (StripGenericArguments(comp.BaseType)?.Equals(canonicalName, StringComparison.OrdinalIgnoreCase) == true)
                 {
                     related.Add(name);
                 }
             }
         }
 
+        related.Remove(canonicalName);
+
         var relatedComponents = related
             .Where(r => _components.ContainsKey(r))
-            .Select(r => _components[r])
+            .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
             .Take(10)
+            .Select(r => _components[r])
             .ToList();
 
         return Task.FromResult<IReadOnlyList<ComponentInfo>>(relatedComponents);
@@ -690,5 +849,15 @@ public sealed class ComponentIndexer : IComponentIndexer
         return trimmed.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
             ? trimmed[..^4]
             : trimmed;
+    }
+
+    /// <summary>
+    /// Strips generic type arguments from a type name (e.g. "MudBaseInput&lt;T&gt;" becomes "MudBaseInput").
+    /// </summary>
+    private static string? StripGenericArguments(string? typeName)
+    {
+        if (typeName is null) return null;
+        var index = typeName.IndexOf('<');
+        return index < 0 ? typeName : typeName[..index];
     }
 }

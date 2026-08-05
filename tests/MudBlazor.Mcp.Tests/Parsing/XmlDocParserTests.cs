@@ -203,7 +203,7 @@ public class XmlDocParserTests
     }
 
     [Fact]
-    public void ParseSourceCode_WithNoPublicClass_ReturnsNull()
+    public void ParseSourceCode_WithInternalClass_MarksResultInternal()
     {
         // Arrange
         var source = """
@@ -217,8 +217,103 @@ public class XmlDocParserTests
         // Act
         var result = _parser.ParseSourceCode(source, "Internal.cs");
 
+        // Assert - internal classes are parsed so IncludeInternalComponents can surface them
+        Assert.NotNull(result);
+        Assert.Equal("InternalComponent", result.ClassName);
+        Assert.True(result.IsInternal);
+        Assert.False(result.IsDeprecated);
+    }
+
+    [Fact]
+    public void ParseSourceCode_WithPublicClass_IsNotInternal()
+    {
+        // Arrange
+        var source = """
+            namespace MudBlazor;
+
+            public class MudButton
+            {
+            }
+            """;
+
+        // Act
+        var result = _parser.ParseSourceCode(source, "MudButton.razor.cs");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.False(result.IsInternal);
+    }
+
+    [Fact]
+    public void ParseSourceCode_WithNoClass_ReturnsNull()
+    {
+        // Arrange
+        var source = """
+            namespace MudBlazor;
+
+            public interface INotAComponent
+            {
+            }
+            """;
+
+        // Act
+        var result = _parser.ParseSourceCode(source, "INotAComponent.cs");
+
         // Assert
         Assert.Null(result);
+    }
+
+    [Fact]
+    public void ParseSourceCode_WithObsoleteClass_MarksResultDeprecated()
+    {
+        // Arrange
+        var source = """
+            namespace MudBlazor;
+
+            [Obsolete("Use MudNewButton instead.")]
+            public class MudOldButton
+            {
+            }
+            """;
+
+        // Act
+        var result = _parser.ParseSourceCode(source, "MudOldButton.razor.cs");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.IsDeprecated);
+    }
+
+    [Fact]
+    public void ParseSourceCode_EventCallbackParameters_AppearOnlyAsEvents()
+    {
+        // Arrange
+        var source = """
+            namespace MudBlazor;
+
+            public class MudButton
+            {
+                [Parameter]
+                public string Label { get; set; }
+
+                [Parameter]
+                public EventCallback OnClosed { get; set; }
+
+                [Parameter]
+                public EventCallback<MouseEventArgs> OnClick { get; set; }
+            }
+            """;
+
+        // Act
+        var result = _parser.ParseSourceCode(source, "MudButton.razor.cs");
+
+        // Assert - a callback must never be duplicated as both parameter and event
+        Assert.NotNull(result);
+        Assert.Single(result.Parameters);
+        Assert.Equal("Label", result.Parameters[0].Name);
+        Assert.Equal(2, result.Events.Count);
+        Assert.Contains(result.Events, e => e.Name == "OnClosed" && e.EventArgsType is null);
+        Assert.Contains(result.Events, e => e.Name == "OnClick" && e.EventArgsType == "MouseEventArgs");
     }
 
     [Fact]

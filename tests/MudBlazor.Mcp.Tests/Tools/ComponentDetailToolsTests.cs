@@ -128,6 +128,56 @@ public class ComponentDetailToolsTests
         Assert.Contains("AlignItems.", result);
     }
 
+    [Fact]
+    public async Task GetComponentDetailAsync_WithInheritedMembers_WalksBaseChain()
+    {
+        // Arrange - MudButton : MudBaseButton : MudComponentBase
+        var indexer = CreateMockIndexerWithBaseChain();
+
+        // Act
+        var result = await ComponentDetailTools.GetComponentDetailAsync(
+            indexer, NullLogger, _versionContext, "MudButton", true, false, CancellationToken.None);
+
+        // Assert - members from every ancestor appear with their declaring type
+        Assert.Contains("Inherited Parameters", result);
+        Assert.Contains("HtmlTag", result);
+        Assert.Contains("MudBaseButton", result);
+        Assert.Contains("Class", result);
+        Assert.Contains("MudComponentBase", result);
+    }
+
+    [Fact]
+    public async Task GetComponentDetailAsync_WithInheritedMembers_SkipsShadowedMembers()
+    {
+        // Arrange - MudButton declares Color itself; the base Color must not appear as inherited
+        var indexer = CreateMockIndexerWithBaseChain();
+
+        // Act
+        var result = await ComponentDetailTools.GetComponentDetailAsync(
+            indexer, NullLogger, _versionContext, "MudButton", true, false, CancellationToken.None);
+
+        // Assert - "Color" appears in own parameters; the inherited section must not repeat it
+        var inheritedSection = result[result.IndexOf("Inherited Parameters", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("| `Color` |", inheritedSection);
+    }
+
+    [Fact]
+    public async Task GetComponentDetailAsync_WithoutInheritedMembers_OmitsInheritedSections()
+    {
+        // Arrange
+        var indexer = CreateMockIndexerWithBaseChain();
+
+        // Act - includeInheritedMembers: false must produce different output than true
+        var withoutInherited = await ComponentDetailTools.GetComponentDetailAsync(
+            indexer, NullLogger, _versionContext, "MudButton", false, false, CancellationToken.None);
+        var withInherited = await ComponentDetailTools.GetComponentDetailAsync(
+            indexer, NullLogger, _versionContext, "MudButton", true, false, CancellationToken.None);
+
+        // Assert
+        Assert.DoesNotContain("Inherited Parameters", withoutInherited);
+        Assert.NotEqual(withoutInherited, withInherited);
+    }
+
     private static IComponentIndexer CreateMockIndexerWithBoolParam()
     {
         var indexer = new Mock<IComponentIndexer>();
@@ -218,6 +268,62 @@ public class ComponentDetailToolsTests
             .ReturnsAsync(component);
         indexer.Setup(x => x.GetComponentAsync("Button", It.IsAny<CancellationToken>()))
             .ReturnsAsync(component);
+
+        return indexer.Object;
+    }
+
+    private static IComponentIndexer CreateMockIndexerWithBaseChain()
+    {
+        var indexer = new Mock<IComponentIndexer>();
+
+        var component = new ComponentInfo(
+            Name: "MudButton",
+            Namespace: "MudBlazor",
+            Summary: "A Material Design button component",
+            Description: null,
+            Category: "Buttons",
+            BaseType: "MudBaseButton",
+            Parameters: [
+                new ComponentParameter("Color", "Color", "The button color", null, false, false, "Appearance")
+            ],
+            Events: [],
+            Methods: [],
+            Examples: [],
+            RelatedComponents: [],
+            DocumentationUrl: null,
+            SourceUrl: null
+        );
+
+        var baseButtonRef = new ApiReference(
+            TypeName: "MudBaseButton",
+            Namespace: "MudBlazor",
+            Summary: "Base class for buttons",
+            BaseType: "MudComponentBase",
+            Members: [
+                new ApiMember("HtmlTag", "Property", "string", "The HTML tag rendered for this button"),
+                new ApiMember("Color", "Property", "Color", "Shadowed by MudButton"),
+                new ApiMember("OnClick", "Event", "EventCallback<MouseEventArgs>", "Raised when clicked"),
+                new ApiMember("FocusAsync", "Method", "Task", "Focuses the button", "")
+            ]);
+
+        var componentBaseRef = new ApiReference(
+            TypeName: "MudComponentBase",
+            Namespace: "MudBlazor",
+            Summary: "Base class for all components",
+            BaseType: "ComponentBaseWithState",
+            Members: [
+                new ApiMember("Class", "Property", "string", "CSS classes applied to this component"),
+                new ApiMember("Style", "Property", "string", "Inline styles applied to this component")
+            ]);
+
+        indexer.Setup(x => x.GetComponentAsync("MudButton", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(component);
+        indexer.Setup(x => x.GetApiReferenceAsync("MudBaseButton", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(baseButtonRef);
+        indexer.Setup(x => x.GetApiReferenceAsync("MudComponentBase", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(componentBaseRef);
+        indexer.Setup(x => x.GetApiReferenceAsync("ComponentBaseWithState", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApiReference?)null);
 
         return indexer.Object;
     }

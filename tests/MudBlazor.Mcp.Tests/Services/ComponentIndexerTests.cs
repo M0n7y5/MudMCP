@@ -469,4 +469,411 @@ public class ComponentIndexerTests : IDisposable
         Assert.DoesNotContain("/tree/dev/", component.SourceUrl);
         Assert.EndsWith("/Components/Button", component.SourceUrl);
     }
+
+    private Mock<IGitRepositoryService> CreateGitService(string repoPath)
+    {
+        var gitService = new Mock<IGitRepositoryService>();
+        gitService.Setup(g => g.IsAvailable).Returns(true);
+        gitService.Setup(g => g.RepositoryPath).Returns(repoPath);
+        gitService.Setup(g => g.EnsureRepositoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        return gitService;
+    }
+
+    private async Task<string> CreateRepoWithButtonAsync()
+    {
+        var repoPath = CreateTempRepoDir();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+        Directory.CreateDirectory(buttonDir);
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudButton.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudButton : MudComponentBase
+            {
+                [Parameter] public string? Label { get; set; }
+            }
+            """);
+
+        return repoPath;
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_ExcludesInternalComponents_ByDefault()
+    {
+        // Arrange - one public and one internal component
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudButtonHelper.cs"), """
+            namespace MudBlazor;
+            internal class MudButtonHelper
+            {
+                [Parameter] public string? Hidden { get; set; }
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        // Act - default options: IncludeInternalComponents = false
+        await indexer.BuildIndexAsync();
+
+        // Assert
+        var all = await indexer.GetAllComponentsAsync();
+        Assert.Single(all);
+        Assert.Equal("MudButton", all[0].Name);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_IncludesInternalComponents_WhenEnabled()
+    {
+        // Arrange
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudButtonHelper.cs"), """
+            namespace MudBlazor;
+            internal class MudButtonHelper
+            {
+                [Parameter] public string? Hidden { get; set; }
+            }
+            """);
+
+        var options = new MudBlazorOptions();
+        options.Parsing.IncludeInternalComponents = true;
+
+        var (indexer, _) = CreateIndexerWithContext(
+            gitService: CreateGitService(repoPath).Object,
+            mudBlazorOptions: options);
+
+        // Act
+        await indexer.BuildIndexAsync();
+
+        // Assert - the internal component is indexed and flagged
+        var all = await indexer.GetAllComponentsAsync();
+        Assert.Equal(2, all.Count);
+        var helper = await indexer.GetComponentAsync("MudButtonHelper");
+        Assert.NotNull(helper);
+        Assert.True(helper.IsInternal);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_ExcludesDeprecatedComponents_WhenDisabled()
+    {
+        // Arrange
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudOldButton.razor.cs"), """
+            namespace MudBlazor;
+            [Obsolete("Use MudButton instead.")]
+            public partial class MudOldButton : MudComponentBase
+            {
+            }
+            """);
+
+        var options = new MudBlazorOptions();
+        options.Parsing.IncludeDeprecatedComponents = false;
+
+        var (indexer, _) = CreateIndexerWithContext(
+            gitService: CreateGitService(repoPath).Object,
+            mudBlazorOptions: options);
+
+        // Act
+        await indexer.BuildIndexAsync();
+
+        // Assert
+        var all = await indexer.GetAllComponentsAsync();
+        Assert.Single(all);
+        Assert.Equal("MudButton", all[0].Name);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_IncludesDeprecatedComponents_ByDefault()
+    {
+        // Arrange
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudOldButton.razor.cs"), """
+            namespace MudBlazor;
+            [Obsolete("Use MudButton instead.")]
+            public partial class MudOldButton : MudComponentBase
+            {
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        // Act - default options: IncludeDeprecatedComponents = true
+        await indexer.BuildIndexAsync();
+
+        // Assert - included and flagged
+        var old = await indexer.GetComponentAsync("MudOldButton");
+        Assert.NotNull(old);
+        Assert.True(old.IsDeprecated);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_CapsExamplesPerComponent()
+    {
+        // Arrange - three examples but a cap of two
+        var repoPath = await CreateRepoWithButtonAsync();
+        var exampleDir = Path.Combine(repoPath, "src", "MudBlazor.Docs", "Pages", "Components", "Button");
+        Directory.CreateDirectory(exampleDir);
+
+        for (var i = 1; i <= 3; i++)
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(exampleDir, $"ButtonExample{i}.razor"),
+                $"<MudButton>Example {i}</MudButton>");
+        }
+
+        var options = new MudBlazorOptions();
+        options.Parsing.MaxExamplesPerComponent = 2;
+
+        var (indexer, _) = CreateIndexerWithContext(
+            gitService: CreateGitService(repoPath).Object,
+            mudBlazorOptions: options);
+
+        // Act
+        await indexer.BuildIndexAsync();
+
+        // Assert
+        var examples = await indexer.GetExamplesAsync("MudButton");
+        Assert.Equal(2, examples.Count);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_IndexesEnumsFromRepository()
+    {
+        // Arrange
+        var repoPath = await CreateRepoWithButtonAsync();
+        var enumsDir = Path.Combine(repoPath, "src", "MudBlazor", "Enums");
+        Directory.CreateDirectory(enumsDir);
+
+        await File.WriteAllTextAsync(Path.Combine(enumsDir, "Color.cs"), """
+            namespace MudBlazor;
+
+            /// <summary>
+            /// Theme colors.
+            /// </summary>
+            public enum Color
+            {
+                /// <summary>The default theme color.</summary>
+                Default = 0,
+                /// <summary>The primary theme color.</summary>
+                Primary = 1,
+                /// <summary>The secondary theme color.</summary>
+                Secondary = 2
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        // Act
+        await indexer.BuildIndexAsync();
+
+        // Assert - the enum is served from source, version-accurate
+        var apiRef = await indexer.GetApiReferenceAsync("Color");
+        Assert.NotNull(apiRef);
+        Assert.Equal("enum", apiRef.Kind);
+        Assert.NotNull(apiRef.EnumValues);
+        Assert.Equal(3, apiRef.EnumValues.Count);
+        Assert.Contains(apiRef.EnumValues, v => v.Name == "Primary" && v.Description == "The primary theme color.");
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_IndexesBaseTypesForApiReference()
+    {
+        // Arrange - base classes live under src/MudBlazor/Base in the upstream tree
+        var repoPath = await CreateRepoWithButtonAsync();
+        var baseDir = Path.Combine(repoPath, "src", "MudBlazor", "Base");
+        Directory.CreateDirectory(baseDir);
+
+        await File.WriteAllTextAsync(Path.Combine(baseDir, "MudComponentBase.cs"), """
+            namespace MudBlazor;
+            public abstract class MudComponentBase
+            {
+                /// <summary>The CSS classes applied to this component.</summary>
+                [Parameter] public string? Class { get; set; }
+
+                /// <summary>The inline styles applied to this component.</summary>
+                [Parameter] public string? Style { get; set; }
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        // Act
+        await indexer.BuildIndexAsync();
+
+        // Assert - base type is queryable for inherited-member walks
+        var baseRef = await indexer.GetApiReferenceAsync("MudComponentBase");
+        Assert.NotNull(baseRef);
+        Assert.NotNull(baseRef.Members);
+        Assert.Contains(baseRef.Members, m => m.Name == "Class" && m.MemberType == "Property");
+        Assert.Contains(baseRef.Members, m => m.Name == "Style" && m.MemberType == "Property");
+    }
+
+    [Fact]
+    public async Task GetRelatedComponentsAsync_WithFlexibleName_ResolvesCanonicalName()
+    {
+        // Arrange - MudIconButton inherits from MudButton
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudIconButton.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudIconButton : MudButton
+            {
+                [Parameter] public string? Icon { get; set; }
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+        await indexer.BuildIndexAsync();
+
+        // Act - "Button" must resolve to "MudButton" before the relationship query
+        var related = await indexer.GetRelatedComponentsAsync("Button", RelationshipType.Child);
+
+        // Assert
+        Assert.Contains(related, c => c.Name == "MudIconButton");
+    }
+
+    [Fact]
+    public async Task GetRelatedComponentsAsync_HonorsRelationshipTypeFilter()
+    {
+        // Arrange - two sibling components in the same category
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        await File.WriteAllTextAsync(Path.Combine(buttonDir, "MudIconButton.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudIconButton : MudComponentBase
+            {
+                [Parameter] public string? Icon { get; set; }
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+        await indexer.BuildIndexAsync();
+
+        // Act
+        var siblings = await indexer.GetRelatedComponentsAsync("MudButton", RelationshipType.Sibling);
+        var commonlyUsed = await indexer.GetRelatedComponentsAsync("MudButton", RelationshipType.CommonlyUsedWith);
+
+        // Assert - siblings come from the shared category; commonly-used-with must NOT
+        // fall back to siblings when no explicit relationships are documented
+        Assert.Contains(siblings, c => c.Name == "MudIconButton");
+        Assert.Empty(commonlyUsed);
+    }
+
+    [Fact]
+    public async Task GetRelatedComponentsAsync_ResolvesGenericBaseTypes()
+    {
+        // Arrange - a child whose base type carries generic arguments
+        var repoPath = await CreateRepoWithButtonAsync();
+        var inputDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Input");
+        Directory.CreateDirectory(inputDir);
+
+        await File.WriteAllTextAsync(Path.Combine(inputDir, "MudBaseInput.cs"), """
+            namespace MudBlazor;
+            public abstract class MudBaseInput<T> : MudComponentBase
+            {
+                [Parameter] public T? Value { get; set; }
+            }
+            """);
+
+        await File.WriteAllTextAsync(Path.Combine(inputDir, "MudInput.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudInput<T> : MudBaseInput<T>
+            {
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+        await indexer.BuildIndexAsync();
+
+        // Act
+        var parents = await indexer.GetRelatedComponentsAsync("MudInput", RelationshipType.Parent);
+
+        // Assert - "MudBaseInput<T>" resolves to the indexed "MudBaseInput"
+        Assert.Contains(parents, c => c.Name == "MudBaseInput");
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_WithUnreadableComponentFile_CountsParseFailure()
+    {
+        // File permission-based failure injection requires POSIX permissions.
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        // Arrange - one readable component and one unreadable component file
+        var repoPath = await CreateRepoWithButtonAsync();
+        var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
+
+        var unreadablePath = Path.Combine(buttonDir, "MudBrokenButton.razor.cs");
+        await File.WriteAllTextAsync(unreadablePath, """
+            namespace MudBlazor;
+            public partial class MudBrokenButton : MudComponentBase
+            {
+            }
+            """);
+        File.SetUnixFileMode(unreadablePath, UnixFileMode.None);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        try
+        {
+            // Act - the failure flows through the real XmlDocParser file-read boundary
+            await indexer.BuildIndexAsync();
+
+            // Assert - the healthy component is indexed, the failure is counted
+            var all = await indexer.GetAllComponentsAsync();
+            Assert.Single(all);
+            Assert.Equal(1, indexer.FailureStatistics.ComponentParseFailures);
+            Assert.Equal(1, indexer.FailureStatistics.Total);
+        }
+        finally
+        {
+            File.SetUnixFileMode(unreadablePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_WithUnreadableDocumentationFile_CountsParseFailure()
+    {
+        // File permission-based failure injection requires POSIX permissions.
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        // Arrange - a component with an unreadable documentation page
+        var repoPath = await CreateRepoWithButtonAsync();
+        var docsDir = Path.Combine(repoPath, "src", "MudBlazor.Docs", "Pages", "Components", "Button");
+        Directory.CreateDirectory(docsDir);
+
+        var unreadablePath = Path.Combine(docsDir, "ButtonPage.razor");
+        await File.WriteAllTextAsync(unreadablePath, "<DocsPageHeader Title=\"Button\" />");
+        File.SetUnixFileMode(unreadablePath, UnixFileMode.None);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        try
+        {
+            // Act - the failure flows through the real RazorDocParser file-read boundary
+            await indexer.BuildIndexAsync();
+
+            // Assert
+            Assert.Equal(1, indexer.FailureStatistics.DocumentationParseFailures);
+            Assert.True(indexer.IsIndexed);
+        }
+        finally
+        {
+            File.SetUnixFileMode(unreadablePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
 }
