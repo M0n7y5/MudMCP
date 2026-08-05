@@ -107,7 +107,17 @@ dotnet publish src/MudBlazor.Mcp/MudBlazor.Mcp.csproj `
 
 ### Option C: Docker (HTTP mode, persistent cache)
 
-Use the published image (built by CI for `linux/amd64` and `linux/arm64`):
+Compose runs the published image (built by CI for `linux/amd64` and `linux/arm64`) with a named volume and health checks preconfigured:
+
+```bash
+docker compose up -d
+docker compose logs -f
+curl http://localhost:8000/health
+```
+
+Pick up a newer image later with `docker compose pull && docker compose up -d`.
+
+Without Compose, the same setup as a plain `docker run`:
 
 ```bash
 docker run -d --name mudblazor-mcp \
@@ -117,13 +127,7 @@ docker run -d --name mudblazor-mcp \
   ghcr.io/m0n7y5/mudmcp:latest
 ```
 
-Or build locally with Compose:
-
-```bash
-docker compose up --build -d
-docker compose logs -f
-curl http://localhost:8000/health
-```
+To build the image from source instead: `docker build -t ghcr.io/m0n7y5/mudmcp:latest .`
 
 The MCP endpoint is `http://localhost:8000/mcp`. Cached data lives in the `mudblazor-data` volume mounted at `/app/data`; each version gets its own subdirectory with the git clone and serialized index. Tagged commits are immutable, so existing clones are reused without fetching.
 

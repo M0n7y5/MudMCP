@@ -3,16 +3,12 @@
 
 services:
   mudblazor-mcp:
-    # `docker compose up` builds locally and tags the result with the GHCR name.
-    # To run the published image instead: docker compose pull && docker compose up --no-build
+    # Runs the published multi-arch image from GitHub Container Registry.
+    # To build from source instead: docker build -t ghcr.io/m0n7y5/mudmcp:latest .
     image: ghcr.io/m0n7y5/mudmcp:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: mudblazor-mcp
     ports:
-      # Host port 8000 matches the default local development URL. Update any
-      # existing mcp.json / claude_desktop_config.json entries that use :5180.
+      # Host port 8000 matches the default local development URL.
       - "8000:8080"
     volumes:
       # Mount the whole data directory so per-version clones, index files, and
