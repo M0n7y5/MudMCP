@@ -513,7 +513,13 @@ public sealed class ComponentIndexer : IComponentIndexer
             return;
         }
 
-        var docFiles = Directory.GetFiles(docsPath, "*Page.razor", SearchOption.AllDirectories);
+        // Route pages are usually named *Page.razor, but not always (v9.7 ships
+        // Badge/MudBadge.razor with @page "/components/badge"), so discover every
+        // non-example Razor file and let parsing decide what is a page: files without
+        // a resolvable component name are skipped below.
+        var docFiles = Directory.GetFiles(docsPath, "*.razor", SearchOption.AllDirectories)
+            .Where(f => !Path.GetFileName(f).Contains("Example", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         _logger.LogDebug("Found {Count} documentation files", docFiles.Length);
 
         // Pass 1: parse every page so the route map can be built from the pages themselves.

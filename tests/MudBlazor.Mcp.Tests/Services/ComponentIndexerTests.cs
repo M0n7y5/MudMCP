@@ -881,7 +881,9 @@ public class ComponentIndexerTests : IDisposable
     public async Task BuildIndexAsync_ResolvesRelatedComponentsFromDocsRoutes()
     {
         // Arrange - MudFab is documented under the route "buttonfab" (not "fab"),
-        // and the Button docs page links it plus mentions MudIconButton in prose.
+        // MudBadge is documented by a route page NOT named *Page.razor (real v9.7
+        // shape: Badge/MudBadge.razor), and the Button docs page links both plus
+        // mentions MudIconButton in prose.
         var repoPath = await CreateRepoWithButtonAsync();
         var buttonDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Button");
 
@@ -899,15 +901,33 @@ public class ComponentIndexerTests : IDisposable
             }
             """);
 
+        var badgeDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Badge");
+        Directory.CreateDirectory(badgeDir);
+        await File.WriteAllTextAsync(Path.Combine(badgeDir, "MudBadge.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudBadge : MudComponentBase
+            {
+            }
+            """);
+
         var docsDir = Path.Combine(repoPath, "src", "MudBlazor.Docs", "Pages", "Components");
         Directory.CreateDirectory(Path.Combine(docsDir, "Button"));
         Directory.CreateDirectory(Path.Combine(docsDir, "ButtonFAB"));
+        Directory.CreateDirectory(Path.Combine(docsDir, "Badge"));
 
         // The Fab page declares the non-derivable route "buttonfab" and its component
         await File.WriteAllTextAsync(Path.Combine(docsDir, "ButtonFAB", "FabPage.razor"), """
             @page "/components/buttonfab"
             <DocsPage>
                 <DocsPageHeader Title="Floating Action Button" Component="@nameof(MudFab)" />
+            </DocsPage>
+            """);
+
+        // Real v9.7 filename shape: a route page not named *Page.razor
+        await File.WriteAllTextAsync(Path.Combine(docsDir, "Badge", "MudBadge.razor"), """
+            @page "/components/badge"
+            <DocsPage>
+                <DocsPageHeader Title="Badge" Component="@nameof(MudBadge)" />
             </DocsPage>
             """);
 
@@ -918,6 +938,7 @@ public class ComponentIndexerTests : IDisposable
             <DocsPage>
                 <DocsPageHeader Title="Button" Component="@nameof(MudButton)" />
                 <MudText>See <MudLink Href="/components/buttonfab#usage">FAB</MudLink> for floating buttons.</MudText>
+                <MudText>Add a <MudLink Href="/components/badge">Badge</MudLink> to show counts.</MudText>
                 <MudText>Works well with <CodeInline>MudIconButton</CodeInline> and <CodeInline>MudUnknownThing</CodeInline>.</MudText>
             </DocsPage>
             """);
@@ -931,6 +952,7 @@ public class ComponentIndexerTests : IDisposable
         var button = await indexer.GetComponentAsync("MudButton");
         Assert.NotNull(button);
         Assert.Contains("MudFab", button.RelatedComponents);
+        Assert.Contains("MudBadge", button.RelatedComponents);
         Assert.Contains("MudIconButton", button.RelatedComponents);
         Assert.DoesNotContain("MudText", button.RelatedComponents);
         Assert.DoesNotContain("MudLink", button.RelatedComponents);
