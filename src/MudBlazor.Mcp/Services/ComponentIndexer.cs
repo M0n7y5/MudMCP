@@ -17,7 +17,6 @@ namespace MudBlazor.Mcp.Services;
 public sealed class ComponentIndexer : IComponentIndexer
 {
     private readonly IGitRepositoryService _gitService;
-    private readonly IDocumentationCache _cache;
     private readonly XmlDocParser _xmlParser;
     private readonly RazorDocParser _razorParser;
     private readonly ExampleExtractor _exampleExtractor;
@@ -41,7 +40,6 @@ public sealed class ComponentIndexer : IComponentIndexer
 
     public ComponentIndexer(
         IGitRepositoryService gitService,
-        IDocumentationCache cache,
         XmlDocParser xmlParser,
         RazorDocParser razorParser,
         ExampleExtractor exampleExtractor,
@@ -51,7 +49,6 @@ public sealed class ComponentIndexer : IComponentIndexer
         ILogger<ComponentIndexer> logger)
     {
         _gitService = gitService;
-        _cache = cache;
         _xmlParser = xmlParser;
         _razorParser = razorParser;
         _exampleExtractor = exampleExtractor;

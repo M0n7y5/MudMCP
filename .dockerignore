@@ -13,8 +13,6 @@
 data/
 src/MudBlazor.Mcp/data/
 
-# Projects not required to build MudBlazor.Mcp
-src/MudBlazor.Mcp.AppHost/
 tests/
 
 # Documentation & engineering scripts – not needed inside the image.

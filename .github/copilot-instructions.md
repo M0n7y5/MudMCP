@@ -4,7 +4,7 @@
 
 Mud MCP is an MCP (Model Context Protocol) server that provides AI assistants with access to MudBlazor component documentation. It clones the MudBlazor repository, parses source files using Roslyn, and exposes an indexed API via MCP tools.
 
-**Tech Stack:** .NET 10, ASP.NET Core, Roslyn, LibGit2Sharp, Aspire 13.1, xUnit + Moq
+**Tech Stack:** .NET 10, ASP.NET Core, Roslyn, LibGit2Sharp, xUnit + Moq
 
 ## Architecture
 
@@ -35,8 +35,6 @@ cd src/MudBlazor.Mcp && dotnet run
 # Run server (stdio transport for CLI clients)
 cd src/MudBlazor.Mcp && dotnet run -- --stdio
 
-# Run with Aspire dashboard (OpenTelemetry, health checks, service discovery)
-cd src/MudBlazor.Mcp.AppHost && dotnet run
 ```
 
 ## Configuration
@@ -48,13 +46,8 @@ Configuration via `appsettings.json` with these key sections:
   "MudBlazor": {
     "Repository": {
       "Url": "https://github.com/MudBlazor/MudBlazor.git",
-      "Branch": "main",
-      "LocalPath": "./data/mudblazor-repo"
-    },
-    "Cache": {
-      "RefreshIntervalMinutes": 60,
-      "ComponentCacheDurationMinutes": 30,
-      "ExampleCacheDurationMinutes": 120
+      "DataPath": "./data",
+      "MaxCachedVersions": 3
     },
     "Parsing": {
       "IncludeInternalComponents": false,
@@ -67,24 +60,6 @@ Configuration via `appsettings.json` with these key sections:
 
 Options are bound to strongly-typed classes in [Configuration/MudBlazorOptions.cs](../src/MudBlazor.Mcp/Configuration/MudBlazorOptions.cs).
 
-## Aspire Integration (13.1)
-
-The project uses .NET Aspire for orchestration and observability:
-
-**AppHost** ([MudBlazor.Mcp.AppHost](../src/MudBlazor.Mcp.AppHost/Program.cs)):
-```csharp
-var builder = DistributedApplication.CreateBuilder(args);
-builder.AddProject<Projects.MudBlazor_Mcp>("mudblazor-mcp");
-builder.Build().Run();
-```
-
-**ServiceDefaults** ([Extensions.cs](../src/MudBlazor.Mcp.ServiceDefaults/Extensions.cs)) provides:
-- OpenTelemetry (metrics, tracing, logging)
-- Health checks (`/health`, `/alive`)
-- Service discovery with resilience handlers
-- OTLP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
-
-To add Aspire defaults to a service: `builder.AddServiceDefaults()`.
 
 ## Roslyn Parsing Deep Dive
 
@@ -295,7 +270,6 @@ public async Task GetComponentDetailAsync_WithInvalidComponent_ThrowsMcpExceptio
 | Category mapping | [Services/Parsing/CategoryMapper.cs](../src/MudBlazor.Mcp/Services/Parsing/CategoryMapper.cs) |
 | Configuration | [Configuration/MudBlazorOptions.cs](../src/MudBlazor.Mcp/Configuration/MudBlazorOptions.cs) |
 | Tool validation | [Tools/ToolValidation.cs](../src/MudBlazor.Mcp/Tools/ToolValidation.cs) |
-| Aspire host | [MudBlazor.Mcp.AppHost/Program.cs](../src/MudBlazor.Mcp.AppHost/Program.cs) |
 
 ## Project-Specific Notes
 
@@ -304,7 +278,6 @@ public async Task GetComponentDetailAsync_WithInvalidComponent_ThrowsMcpExceptio
 - Health checks at `/health`, `/health/ready`, `/health/live`
 - All logging goes to stderr for MCP protocol compatibility
 - Component names support flexible lookup: "Button" resolves to "MudButton"
-- Aspire SDK version is pinned in `MudBlazor.Mcp.AppHost.csproj`: `<Sdk Name="Aspire.AppHost.Sdk" Version="13.1.0" />`
 
 ## License
 

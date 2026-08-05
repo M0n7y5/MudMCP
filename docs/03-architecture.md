@@ -12,7 +12,6 @@ This document provides a deep technical dive into the Mud MCP architecture, incl
 - [MCP Protocol Implementation](#mcp-protocol-implementation)
 - [Roslyn Parsing Pipeline](#roslyn-parsing-pipeline)
 - [Caching Strategy](#caching-strategy)
-- [Aspire Integration](#aspire-integration)
 
 ---
 
@@ -50,7 +49,7 @@ This document provides a deep technical dive into the Mud MCP architecture, incl
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                     Service Layer                                 │   │
 │  │                    ComponentIndexer                               │   │
-│  │         IDocumentationCache │ IGitRepositoryService              │   │
+│  │                     IGitRepositoryService                        │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                 │                                       │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
@@ -138,7 +137,6 @@ Business logic and data management:
 | Service | Responsibility |
 |---------|----------------|
 | `IComponentIndexer` | Builds and queries the component index |
-| `IDocumentationCache` | Caches parsed documentation |
 | `IGitRepositoryService` | Manages Git operations |
 
 ### Parsing Layer
@@ -478,75 +476,18 @@ private readonly ConcurrentDictionary<string, ComponentInfo> _components;
 
 **Characteristics:**
 - Thread-safe for concurrent reads
-- Rebuilt on server restart
+- Restored from a per-version serialized index or rebuilt from source
 - ~85 components, minimal memory footprint
 
-### Documentation Cache
+### Serialized Index Cache
 
-`IDocumentationCache` provides additional caching:
-
-```csharp
-public interface IDocumentationCache
-{
-    Task<T?> GetOrCreateAsync<T>(string key, Func<Task<T>> factory, TimeSpan? expiration = null);
-    void Remove(string key);
-    void Clear();
-}
-```
-
-**Configuration:**
-```json
-{
-  "Cache": {
-    "SlidingExpirationMinutes": 60,
-    "AbsoluteExpirationMinutes": 1440
-  }
-}
-```
+After a successful full build, `ComponentIndexer` writes the complete index to
+`data/v{Version}/index.json`. Startup restores this file when its schema and
+parsing options match the current configuration; otherwise the repository is
+parsed again and the cache is replaced.
 
 ---
 
-## Aspire Integration
-
-### ServiceDefaults
-
-The `MudBlazor.Mcp.ServiceDefaults` project provides:
-
-```csharp
-public static IHostApplicationBuilder AddServiceDefaults(this IHostApplicationBuilder builder)
-{
-    builder.ConfigureOpenTelemetry();      // Metrics, traces, logs
-    builder.AddDefaultHealthChecks();      // Health endpoints
-    builder.Services.AddServiceDiscovery(); // Service mesh support
-    builder.Services.ConfigureHttpClientDefaults(http =>
-    {
-        http.AddStandardResilienceHandler(); // Retry policies
-        http.AddServiceDiscovery();
-    });
-    return builder;
-}
-```
-
-### AppHost
-
-Orchestration via Aspire:
-
-```csharp
-var builder = DistributedApplication.CreateBuilder(args);
-builder.AddProject<Projects.MudBlazor_Mcp>("mudblazor-mcp");
-builder.Build().Run();
-```
-
-### OpenTelemetry
-
-Automatic instrumentation:
-- **Metrics**: ASP.NET Core, HTTP client, runtime
-- **Traces**: Request traces with spans
-- **Logs**: Structured logging to OTLP
-
-Export to OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
-
----
 
 ## Health Checks
 

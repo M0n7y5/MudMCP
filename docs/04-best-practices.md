@@ -379,25 +379,6 @@ return HealthCheckResult.Healthy(
     });
 ```
 
-### OpenTelemetry Integration
-
-Aspire ServiceDefaults enables automatic telemetry:
-
-```csharp
-builder.Services.AddOpenTelemetry()
-    .WithMetrics(metrics =>
-    {
-        metrics.AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddRuntimeInstrumentation();
-    })
-    .WithTracing(tracing =>
-    {
-        tracing.AddSource(builder.Environment.ApplicationName)
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation();
-    });
-```
 
 ---
 
@@ -496,7 +477,6 @@ public sealed class MudBlazorOptions
     public const string SectionName = "MudBlazor";
     
     public RepositoryOptions Repository { get; set; } = new();
-    public CacheOptions Cache { get; set; } = new();
     public ParsingOptions Parsing { get; set; } = new();
 }
 

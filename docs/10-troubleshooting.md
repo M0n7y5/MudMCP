@@ -184,7 +184,7 @@ UnauthorizedAccessException: Access to the path is denied
    {
      "MudBlazor": {
        "Repository": {
-         "LocalPath": "C:/Temp/mudblazor-repo"
+        "DataPath": "C:/Temp/mudmcp-data"
        }
      }
    }
@@ -440,26 +440,14 @@ Or use short paths:
 
 **Solutions:**
 
-1. **Pre-clone repository:**
-   ```bash
-   git clone https://github.com/MudBlazor/MudBlazor.git ./data/mudblazor-repo
-   ```
+1. **Persist the data directory:** Keep the configured `MudBlazor:Repository:DataPath`
+   between runs so the versioned repository and serialized index can be reused.
 
 2. **Use published binary:**
    ```bash
    dotnet publish -c Release -r win-x64 --self-contained
    ```
 
-3. **Increase cache duration:**
-   ```json
-   {
-     "MudBlazor": {
-       "Cache": {
-         "AbsoluteExpirationMinutes": 2880
-       }
-     }
-   }
-   ```
 
 ### Issue: High memory usage
 
@@ -476,16 +464,6 @@ Or use short paths:
    }
    ```
 
-2. **Reduce cache size:**
-   ```json
-   {
-     "MudBlazor": {
-       "Cache": {
-         "ComponentCacheDurationMinutes": 15
-       }
-     }
-   }
-   ```
 
 ### Issue: Slow searches
 

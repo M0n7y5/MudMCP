@@ -44,7 +44,6 @@ The main configuration structure:
 {
   "MudBlazor": {
     "Repository": { /* Git repository settings */ },
-    "Cache": { /* Caching behavior */ },
     "Parsing": { /* Parser options */ }
   },
   "Logging": { /* Log levels */ },
@@ -63,8 +62,8 @@ Controls how the MudBlazor repository is cloned and updated.
   "MudBlazor": {
     "Repository": {
       "Url": "https://github.com/MudBlazor/MudBlazor.git",
-      "Branch": "main",
-      "LocalPath": "./data/mudblazor-repo"
+      "DataPath": "./data",
+      "MaxCachedVersions": 3
     }
   }
 }
@@ -75,25 +74,25 @@ Controls how the MudBlazor repository is cloned and updated.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `Url` | string | `https://github.com/MudBlazor/MudBlazor.git` | Repository URL |
-| `Branch` | string | `main` | Branch to clone/track |
-| `LocalPath` | string | `./data/mudblazor-repo` | Local clone path |
+| `DataPath` | string | `./data` | Base path for versioned repositories and indexes |
+| `MaxCachedVersions` | int | `3` | Maximum version directories retained by the LRU cache |
 
 ### Use Cases
 
-**Use development branch:**
+**Custom data location:**
 ```json
 {
   "Repository": {
-    "Branch": "dev"
+    "DataPath": "C:/mudmcp-data"
   }
 }
 ```
 
-**Custom clone location:**
+**Retain more versions:**
 ```json
 {
   "Repository": {
-    "LocalPath": "C:/repos/mudblazor"
+    "MaxCachedVersions": 5
   }
 }
 ```
@@ -106,42 +105,6 @@ Controls how the MudBlazor repository is cloned and updated.
   }
 }
 ```
-
----
-
-## Cache Options
-
-Controls caching behavior for parsed documentation.
-
-```json
-{
-  "MudBlazor": {
-    "Cache": {
-      "RefreshIntervalMinutes": 60,
-      "ComponentCacheDurationMinutes": 30,
-      "ExampleCacheDurationMinutes": 120,
-      "SlidingExpirationMinutes": 60,
-      "AbsoluteExpirationMinutes": 1440
-    }
-  }
-}
-```
-
-### Options Reference
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `RefreshIntervalMinutes` | int | `60` | Auto-refresh interval |
-| `ComponentCacheDurationMinutes` | int | `30` | Component cache TTL |
-| `ExampleCacheDurationMinutes` | int | `120` | Example cache TTL |
-| `SlidingExpirationMinutes` | int | `60` | Sliding expiration |
-| `AbsoluteExpirationMinutes` | int | `1440` | Max cache lifetime |
-
-### Cache Behavior
-
-- **Sliding expiration**: Cache expires if not accessed within this period
-- **Absolute expiration**: Cache expires regardless of access (max 24 hours default)
-- **Auto-refresh**: Background refresh of repository (if implemented)
 
 ---
 
@@ -320,11 +283,8 @@ Use double underscore (`__`) to set nested options:
 
 ```bash
 # Repository settings
-export MudBlazor__Repository__Branch=master
-export MudBlazor__Repository__LocalPath=/custom/path
-
-# Cache settings
-export MudBlazor__Cache__RefreshIntervalMinutes=30
+export MudBlazor__Repository__DataPath=/custom/path
+export MudBlazor__Repository__MaxCachedVersions=5
 
 # Parsing settings
 export MudBlazor__Parsing__MaxExamplesPerComponent=10
@@ -336,16 +296,14 @@ export Logging__LogLevel__Default=Debug
 ### Windows PowerShell
 
 ```powershell
-$env:MudBlazor__Repository__Branch = "main"
-$env:MudBlazor__Cache__RefreshIntervalMinutes = "30"
+$env:MudBlazor__Repository__DataPath = "C:\mudmcp-data"
 dotnet run
 ```
 
 ### Docker / Container
 
 ```dockerfile
-ENV MudBlazor__Repository__Branch=main
-ENV MudBlazor__Cache__RefreshIntervalMinutes=30
+ENV MudBlazor__Repository__DataPath=/app/data
 ENV Logging__LogLevel__Default=Warning
 ```
 
@@ -355,7 +313,6 @@ ENV Logging__LogLevel__Default=Warning
 |----------|---------|
 | `ASPNETCORE_ENVIRONMENT` | Set environment (Development, Production) |
 | `ASPNETCORE_URLS` | Server URL binding |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry endpoint |
 | `DOTNET_RUNNING_IN_CONTAINER` | Container detection |
 
 ---
@@ -369,12 +326,8 @@ ENV Logging__LogLevel__Default=Warning
 {
   "MudBlazor": {
     "Repository": {
-      "Branch": "main",
-      "LocalPath": "./data/mudblazor-repo"
-    },
-    "Cache": {
-      "RefreshIntervalMinutes": 5,
-      "ComponentCacheDurationMinutes": 5
+      "DataPath": "./data",
+      "MaxCachedVersions": 3
     },
     "Parsing": {
       "MaxExamplesPerComponent": 50
@@ -396,12 +349,8 @@ ENV Logging__LogLevel__Default=Warning
 {
   "MudBlazor": {
     "Repository": {
-      "Branch": "main",
-      "LocalPath": "/app/data/mudblazor-repo"
-    },
-    "Cache": {
-      "RefreshIntervalMinutes": 120,
-      "AbsoluteExpirationMinutes": 2880
+      "DataPath": "/app/data",
+      "MaxCachedVersions": 3
     },
     "Parsing": {
       "IncludeInternalComponents": false,
@@ -449,11 +398,8 @@ data:
     {
       "MudBlazor": {
         "Repository": {
-          "Branch": "master",
-          "LocalPath": "/app/data/repo"
-        },
-        "Cache": {
-          "RefreshIntervalMinutes": 120
+          "DataPath": "/app/data",
+          "MaxCachedVersions": 3
         }
       },
       "Logging": {
@@ -476,25 +422,16 @@ public sealed class MudBlazorOptions
     public const string SectionName = "MudBlazor";
     
     public RepositoryOptions Repository { get; set; } = new();
-    public CacheOptions Cache { get; set; } = new();
     public ParsingOptions Parsing { get; set; } = new();
 }
 
 public sealed class RepositoryOptions
 {
     public string Url { get; set; } = "https://github.com/MudBlazor/MudBlazor.git";
-    public string Branch { get; set; } = "dev";
-    public string LocalPath { get; set; } = "./data/mudblazor-repo";
+    public string DataPath { get; set; } = "./data";
+    public int MaxCachedVersions { get; set; } = 3;
 }
 
-public sealed class CacheOptions
-{
-    public int RefreshIntervalMinutes { get; set; } = 60;
-    public int ComponentCacheDurationMinutes { get; set; } = 30;
-    public int ExampleCacheDurationMinutes { get; set; } = 120;
-    public int SlidingExpirationMinutes { get; set; } = 60;
-    public int AbsoluteExpirationMinutes { get; set; } = 1440;
-}
 
 public sealed class ParsingOptions
 {
@@ -511,7 +448,7 @@ public sealed class ParsingOptions
 public ComponentIndexer(IOptions<MudBlazorOptions> options)
 {
     _options = options.Value;
-    var branch = _options.Repository.Branch;
+    var dataPath = _options.Repository.DataPath;
 }
 
 // Via IOptionsSnapshot<T> (scoped, reloads on change)

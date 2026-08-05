@@ -31,7 +31,7 @@ Mud MCP bridges the gap between AI assistants and MudBlazor component documentat
 
 - **Version-Aware**: Serves documentation for the exact MudBlazor version your project uses
 - **AI-Optimized Output**: Formats responses in Markdown for optimal LLM consumption
-- **Production-Ready**: Built with Aspire 13.1, health checks, and observability
+- **Production-Ready**: Built-in readiness, liveness, and detailed health checks
 - **Flexible Deployment**: Supports both HTTP and stdio transports
 - **Multi-Version Cache**: Caches up to 3 versions simultaneously with LRU eviction — instant startup after first run
 
@@ -139,7 +139,7 @@ curl http://localhost:8000/health
 
 ## Local MCP (stdio — no frontend required)
 
-Run the MCP server locally without starting a web server or the Aspire dashboard. The server communicates directly through stdin/stdout, which is the native mode for Cursor, Claude Code, Claude Desktop, and most MCP clients.
+Run the MCP server locally without starting a web server. The server communicates directly through stdin/stdout, which is the native mode for Cursor, Claude Code, Claude Desktop, and most MCP clients.
 
 > **Important:** The `--version` argument is required. It must match the MudBlazor version in your project's `.csproj` file (e.g., `<PackageReference Include="MudBlazor" Version="9.0.0" />`).
 
@@ -320,14 +320,12 @@ MudBlazor.Mcp/
 │   └── agents/
 │       └── mudblazor-expert.agent.md  # GitHub Copilot agent file
 ├── src/
-│   ├── MudBlazor.Mcp/              # Main MCP server
-│   │   ├── Configuration/          # Strongly-typed options
-│   │   ├── Models/                 # Domain models (immutable records)
-│   │   ├── Services/               # Core services
-│   │   │   └── Parsing/            # Roslyn-based parsers
-│   │   └── Tools/                  # MCP tool implementations
-│   ├── MudBlazor.Mcp.AppHost/      # Aspire orchestration
-│   └── MudBlazor.Mcp.ServiceDefaults/  # Shared service configuration
+│   └── MudBlazor.Mcp/              # Main MCP server
+│       ├── Configuration/          # Strongly-typed options
+│       ├── Models/                 # Domain models (immutable records)
+│       ├── Services/               # Core services
+│       │   └── Parsing/            # Roslyn-based parsers
+│       └── Tools/                  # MCP tool implementations
 ├── tests/
 │   └── MudBlazor.Mcp.Tests/        # Unit tests
 ├── docs/                           # Documentation
@@ -366,7 +364,6 @@ See the [LICENSE](LICENSE) file for full details.
 
 - [MudBlazor](https://mudblazor.com/) — The excellent Blazor component library
 - [Model Context Protocol](https://modelcontextprotocol.io/) — The protocol specification
-- [.NET Aspire](https://learn.microsoft.com/dotnet/aspire/) — Cloud-native orchestration
 - [Roslyn](https://github.com/dotnet/roslyn) — The .NET Compiler Platform
 - [github/awesome-copilot](https://github.com/github/awesome-copilot) — Inspiration for the expert agent file
 

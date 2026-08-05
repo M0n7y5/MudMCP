@@ -103,7 +103,7 @@ dotnet run
 2. Component index is built (~10-30 seconds)
 3. Server starts on `http://localhost:8000`
 
-Local `dotnet run`, Aspire, and Docker examples use HTTP by default. IIS deployment is configured separately: its default `auto` mode uses HTTPS when a certificate thumbprint or existing HTTPS IIS binding is available, and otherwise falls back to HTTP.
+Local `dotnet run` and Docker examples use HTTP by default. IIS deployment is configured separately: its default `auto` mode uses HTTPS when a certificate thumbprint or existing HTTPS IIS binding is available, and otherwise falls back to HTTP.
 
 **Console output:**
 ```
@@ -131,18 +131,6 @@ In stdio mode:
 - Server writes responses to stdout
 - All logging goes to stderr
 
-### With Aspire Dashboard
-
-For development with observability:
-
-```bash
-cd src/MudBlazor.Mcp.AppHost
-dotnet run
-```
-
-This starts:
-- The Mud MCP server
-- Aspire dashboard for monitoring (typically `http://localhost:15000`)
 
 ---
 
@@ -242,11 +230,11 @@ curl -X POST http://localhost:8000/mcp \
 Override default settings using environment variables:
 
 ```bash
-# Change repository branch
-export MudBlazor__Repository__Branch=master
+# Change the versioned data location
+export MudBlazor__Repository__DataPath=/custom/path
 
-# Change local path
-export MudBlazor__Repository__LocalPath=/custom/path
+# Retain more cached versions
+export MudBlazor__Repository__MaxCachedVersions=5
 
 # Change log level
 export Logging__LogLevel__Default=Debug
@@ -261,13 +249,8 @@ Modify `src/MudBlazor.Mcp/appsettings.json`:
   "MudBlazor": {
     "Repository": {
       "Url": "https://github.com/MudBlazor/MudBlazor.git",
-      "Branch": "dev",
-      "LocalPath": "./data/mudblazor-repo"
-    },
-    "Cache": {
-      "RefreshIntervalMinutes": 60,
-      "ComponentCacheDurationMinutes": 30,
-      "ExampleCacheDurationMinutes": 120
+      "DataPath": "./data",
+      "MaxCachedVersions": 3
     },
     "Parsing": {
       "IncludeInternalComponents": false,
@@ -452,8 +435,6 @@ dotnet watch run --project src/MudBlazor.Mcp
 # Run tests continuously
 dotnet watch test --project tests/MudBlazor.Mcp.Tests
 
-# Run with Aspire for full observability
-cd src/MudBlazor.Mcp.AppHost && dotnet run
 ```
 
 ### Useful Development Endpoints

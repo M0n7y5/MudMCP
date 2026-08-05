@@ -17,8 +17,4 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\MudBlazor.Mcp.ServiceDefaults\MudBlazor.Mcp.ServiceDefaults.csproj" />
-  </ItemGroup>
-
 </Project>

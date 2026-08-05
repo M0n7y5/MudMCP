@@ -206,7 +206,6 @@ static void RegisterCoreServices(IServiceCollection services, IConfiguration con
 {
     services.Configure<MudBlazorOptions>(configuration.GetSection("MudBlazor"));
     services.Configure<RepositoryOptions>(configuration.GetSection("MudBlazor:Repository"));
-    services.Configure<CacheOptions>(configuration.GetSection("MudBlazor:Cache"));
     services.Configure<ParsingOptions>(configuration.GetSection("MudBlazor:Parsing"));
 
     // Read config to derive shared data path
@@ -218,10 +217,8 @@ static void RegisterCoreServices(IServiceCollection services, IConfiguration con
             repoOptions.MaxCachedVersions,
             logger: sp.GetRequiredService<ILogger<VersionCacheManager>>()));
 
-    services.AddMemoryCache();
 
     services.AddSingleton<IGitRepositoryService, GitRepositoryService>();
-    services.AddSingleton<IDocumentationCache, DocumentationCache>();
     services.AddSingleton<IComponentIndexer, ComponentIndexer>();
 
     services.AddSingleton<XmlDocParser>();
@@ -244,7 +241,8 @@ static async Task BuildIndexAsync(IServiceProvider services)
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Failed to build initial index. Server will start without component data.");
+        logger.LogCritical(ex, "Failed to build initial index. Server startup is aborted.");
+        throw;
     }
 }
 

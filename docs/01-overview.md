@@ -119,9 +119,8 @@ Mud MCP provides AI assistants with:
 - Enum value listings with descriptions
 - Type information and inheritance
 
-### 6. Health & Observability
+### 6. Health Monitoring
 - Health check endpoints
-- OpenTelemetry integration via Aspire
 - Detailed index status reporting
 
 ---
@@ -227,7 +226,6 @@ The server handles errors gracefully:
 | **.NET** | 10.0 | Runtime and SDK |
 | **C#** | 13 | Programming language |
 | **ASP.NET Core** | 10.0 | Web framework |
-| **Aspire** | 13.1 | Orchestration and observability |
 | **ModelContextProtocol.AspNetCore** | Latest | MCP SDK |
 | **Microsoft.CodeAnalysis (Roslyn)** | Latest | C# source parsing |
 | **LibGit2Sharp** | Latest | Git operations |

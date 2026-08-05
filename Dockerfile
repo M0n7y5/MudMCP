@@ -11,14 +11,11 @@ WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props nuget.config ./
 
 # Copy project files for restore layer caching.
-COPY src/MudBlazor.Mcp.ServiceDefaults/MudBlazor.Mcp.ServiceDefaults.csproj \
-     src/MudBlazor.Mcp.ServiceDefaults/
 COPY src/MudBlazor.Mcp/MudBlazor.Mcp.csproj src/MudBlazor.Mcp/
 
 RUN dotnet restore src/MudBlazor.Mcp/MudBlazor.Mcp.csproj
 
 # Copy the actual source after restore to preserve the cache layer above.
-COPY src/MudBlazor.Mcp.ServiceDefaults/ src/MudBlazor.Mcp.ServiceDefaults/
 COPY src/MudBlazor.Mcp/ src/MudBlazor.Mcp/
 
 RUN dotnet publish src/MudBlazor.Mcp/MudBlazor.Mcp.csproj \

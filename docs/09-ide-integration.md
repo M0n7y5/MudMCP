@@ -337,10 +337,9 @@ Pass environment variables to configure the server:
   "github.copilot.chat.experimental.mcpServers": {
     "mudblazor-mcp": {
       "command": "dotnet",
-      "args": ["run", "--project", "...", "--", "--stdio"],
+      "args": ["run", "--project", "...", "--", "--stdio", "--version", "9.0.0"],
       "env": {
         "DOTNET_ENVIRONMENT": "Development",
-        "MudBlazor__Repository__Branch": "master",
         "Logging__LogLevel__Default": "Debug"
       }
     }
@@ -354,10 +353,9 @@ Pass environment variables to configure the server:
   "mcpServers": {
     "mudblazor-mcp": {
       "command": "...",
-      "args": ["--stdio"],
+      "args": ["--stdio", "--version", "9.0.0"],
       "env": {
-        "DOTNET_ENVIRONMENT": "Production",
-        "MudBlazor__Cache__RefreshIntervalMinutes": "120"
+        "DOTNET_ENVIRONMENT": "Production"
       }
     }
   }
@@ -387,19 +385,13 @@ Run different configurations for different projects:
 ```json
 {
   "mcpServers": {
-    "mudblazor-dev": {
+    "mudblazor-v9": {
       "command": "dotnet",
-      "args": ["run", "--project", "...", "--", "--stdio"],
-      "env": {
-        "MudBlazor__Repository__Branch": "dev"
-      }
+      "args": ["run", "--project", "...", "--", "--stdio", "--version", "9.0.0"]
     },
-    "mudblazor-stable": {
+    "mudblazor-v8": {
       "command": "dotnet",
-      "args": ["run", "--project", "...", "--", "--stdio"],
-      "env": {
-        "MudBlazor__Repository__Branch": "master"
-      }
+      "args": ["run", "--project", "...", "--", "--stdio", "--version", "8.0.0"]
     }
   }
 }

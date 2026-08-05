@@ -47,20 +47,18 @@ public class ComponentIndexerTests : IDisposable
 
     private ComponentIndexer CreateIndexer(
         IGitRepositoryService? gitService = null,
-        IDocumentationCache? cache = null,
         XmlDocParser? xmlParser = null,
         RazorDocParser? razorParser = null,
         ExampleExtractor? exampleExtractor = null,
         CategoryMapper? categoryMapper = null,
         string? dataPath = null)
     {
-        var (indexer, _) = CreateIndexerWithContext(gitService, cache, xmlParser, razorParser, exampleExtractor, categoryMapper, dataPath);
+        var (indexer, _) = CreateIndexerWithContext(gitService, xmlParser, razorParser, exampleExtractor, categoryMapper, dataPath);
         return indexer;
     }
 
     private (ComponentIndexer Indexer, VersionContext Context) CreateIndexerWithContext(
         IGitRepositoryService? gitService = null,
-        IDocumentationCache? cache = null,
         XmlDocParser? xmlParser = null,
         RazorDocParser? razorParser = null,
         ExampleExtractor? exampleExtractor = null,
@@ -72,7 +70,6 @@ public class ComponentIndexerTests : IDisposable
             s.IsAvailable == true && 
             s.RepositoryPath == "/fake/repo");
         
-        cache ??= Mock.Of<IDocumentationCache>();
         xmlParser ??= new XmlDocParser(Mock.Of<ILogger<XmlDocParser>>());
         razorParser ??= new RazorDocParser(Mock.Of<ILogger<RazorDocParser>>());
         exampleExtractor ??= new ExampleExtractor(Mock.Of<ILogger<ExampleExtractor>>());
@@ -88,7 +85,6 @@ public class ComponentIndexerTests : IDisposable
 
         var indexer = new ComponentIndexer(
             gitService,
-            cache,
             xmlParser,
             razorParser,
             exampleExtractor,
@@ -350,7 +346,7 @@ public class ComponentIndexerTests : IDisposable
     }
 
     [Fact]
-    public async Task BuildIndexAsync_WithStaleCacheOptions_DeletesAndRebuilds()
+    public async Task BuildIndexAsync_WithStaleParsingOptions_DeletesAndRebuilds()
     {
         // Arrange — create a repo with one component, and a stale index.json with mismatched options
         var repoPath = CreateTempRepoDir();
