@@ -18,9 +18,9 @@ The server clones the MudBlazor repository at the tag matching your `--version`,
 - Up to 3 versions are cached side by side with LRU eviction; after the first run a version starts instantly from its serialized index
 - HTTP and stdio transports; readiness and liveness health endpoints report index state and parse failures
 
-## Quick Start
+## Quick Start (Docker Compose)
 
-Prerequisites: [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Git](https://git-scm.com/).
+Prerequisites: [Docker](https://docs.docker.com/get-docker/) with the Compose plugin.
 
 1. Find the MudBlazor version in your project's `.csproj`:
 
@@ -28,17 +28,19 @@ Prerequisites: [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Git](ht
    <PackageReference Include="MudBlazor" Version="9.0.0" />
    ```
 
-2. Run the server with that version (the `--version` argument is required):
+2. Start the server with that version (defaults to `9.0.0`):
 
    ```bash
-   dotnet run --project src/MudBlazor.Mcp/MudBlazor.Mcp.csproj -- --version 9.0.0
+   git clone https://github.com/M0n7y5/MudMCP.git && cd MudMCP
+   MUDBLAZOR_VERSION=9.0.0 docker compose up -d
    ```
 
-   The first run clones the MudBlazor repository (about 500 MB) and builds the index; later runs load the cached index and start instantly.
+   Compose always pulls and runs exactly `ghcr.io/m0n7y5/mudmcp:latest` (built by CI for `linux/amd64` and `linux/arm64`). The first start clones the MudBlazor repository (about 500 MB) and builds the index; later starts load the cached index from the `mudblazor-data` volume and are instant.
 
 3. Verify:
 
    ```bash
+   docker compose logs -f
    curl http://localhost:8000/health
    ```
 
@@ -55,9 +57,31 @@ Prerequisites: [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Git](ht
    }
    ```
 
-## Local MCP (stdio)
+Teardown:
 
-Most MCP clients (Cursor, Claude Code, Claude Desktop) spawn the server as a child process and talk over stdin/stdout. No web server is started in this mode.
+```bash
+# Stop, keep the cache
+docker compose down
+
+# Stop and delete all cached data (full re-clone and re-index next start)
+docker compose down -v
+```
+
+Without Compose, the same setup as a plain `docker run`:
+
+```bash
+docker run -d --name mudblazor-mcp \
+  -p 8000:8080 \
+  -e MUDBLAZOR_VERSION=9.0.0 \
+  -v mudblazor-data:/app/data \
+  ghcr.io/m0n7y5/mudmcp:latest
+```
+
+Cached data lives in the `mudblazor-data` volume mounted at `/app/data`; each version gets its own subdirectory with the git clone and serialized index. Tagged commits are immutable, so existing clones are reused without fetching.
+
+## Running without Docker
+
+Options A and B run in stdio mode: most MCP clients (Cursor, Claude Code, Claude Desktop) spawn the server as a child process and talk over stdin/stdout, so no web server is started. Option C runs the HTTP server from source.
 
 ### Option A: dotnet run
 
@@ -105,37 +129,15 @@ dotnet publish src/MudBlazor.Mcp/MudBlazor.Mcp.csproj `
 }
 ```
 
-### Option C: Docker (HTTP mode, persistent cache)
+### Option C: from source (HTTP mode)
 
-Compose runs the published image (built by CI for `linux/amd64` and `linux/arm64`) with a named volume and health checks preconfigured:
-
-```bash
-docker compose up -d
-docker compose logs -f
-curl http://localhost:8000/health
-```
-
-Compose always pulls and runs exactly `ghcr.io/m0n7y5/mudmcp:latest`, so every `docker compose up` uses the current published image.
-
-Without Compose, the same setup as a plain `docker run`:
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Git](https://git-scm.com/). The `--version` argument is required:
 
 ```bash
-docker run -d --name mudblazor-mcp \
-  -p 8000:8080 \
-  -e MUDBLAZOR_VERSION=9.0.0 \
-  -v mudblazor-data:/app/data \
-  ghcr.io/m0n7y5/mudmcp:latest
+dotnet run --project src/MudBlazor.Mcp/MudBlazor.Mcp.csproj -- --version 9.0.0
 ```
 
-The MCP endpoint is `http://localhost:8000/mcp`. Cached data lives in the `mudblazor-data` volume mounted at `/app/data`; each version gets its own subdirectory with the git clone and serialized index. Tagged commits are immutable, so existing clones are reused without fetching.
-
-```bash
-# Stop, keep the cache
-docker compose down
-
-# Stop and delete all cached data (full re-clone and re-index next start)
-docker compose down -v
-```
+The MCP endpoint is `http://localhost:8000/mcp`; connect clients with the same HTTP config as the Quick Start.
 
 ### Version caching
 
