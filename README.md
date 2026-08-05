@@ -1,151 +1,67 @@
 # Mud MCP
 
-An enterprise-grade Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to MudBlazor component documentation, code examples, and API reference.
+A Model Context Protocol (MCP) server that gives AI assistants access to MudBlazor component documentation, code examples, and API reference for the exact MudBlazor version your project uses.
 
+[![CI](https://github.com/M0n7y5/MudMCP/actions/workflows/ci.yml/badge.svg)](https://github.com/M0n7y5/MudMCP/actions/workflows/ci.yml)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple)](https://dotnet.microsoft.com/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-blue)](https://modelcontextprotocol.io/)
 [![License: GPL-2.0](https://img.shields.io/badge/License-GPL%202.0-green.svg)](LICENSE)
 
 > **Disclaimer:** This project is not affiliated with, endorsed by, or officially supported by the MudBlazor team. It is an independent implementation that extracts and serves documentation from the official MudBlazor repository.
 
----
+## How it works
 
-## 📖 Table of Contents
+The server clones the MudBlazor repository at the tag matching your `--version`, parses the source with Roslyn, and exposes the resulting index through MCP tools. Clients such as GitHub Copilot, Claude Code, and Cursor query it instead of guessing from training data.
 
-- [Overview](#overview)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Documentation](#documentation)
-- [Available MCP Tools](#available-mcp-tools)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
-- [License](#license)
-
----
-
-## Overview
-
-Mud MCP bridges the gap between AI assistants and MudBlazor component documentation. It clones the official MudBlazor repository, parses source files using Roslyn, and exposes an indexed API via the Model Context Protocol—enabling AI agents like GitHub Copilot, Claude, and other MCP-compatible clients to provide accurate, context-aware assistance for Blazor development.
-
-### Key Value Propositions
-
-- **Version-Aware**: Serves documentation for the exact MudBlazor version your project uses
-- **AI-Optimized Output**: Formats responses in Markdown for optimal LLM consumption
-- **Production-Ready**: Built-in readiness, liveness, and detailed health checks
-- **Flexible Deployment**: Supports both HTTP and stdio transports
-- **Multi-Version Cache**: Caches up to 3 versions simultaneously with LRU eviction — instant startup after first run
-
----
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| **Component Discovery** | List all ~85 MudBlazor components with category filtering |
-| **Detailed Documentation** | Access parameters, events, methods, and inheritance info |
-| **Code Examples** | Extract real examples from the MudBlazor documentation |
-| **Semantic Search** | Search components by name, description, or parameters |
-| **API Reference** | Full API reference for components and enum types |
-| **Related Components** | Discover related components through inheritance and categories |
-| **Health Monitoring** | Built-in health checks with detailed status reporting |
-| **Expert Agent** | Pre-built agent file for optimal MCP tool usage with GitHub Copilot |
-
----
-
-## MudBlazor Expert Agent
-
-To maximize the value of the MCP server, this project includes a specialized GitHub Copilot agent file:
-
-**Location:** `.github/agents/mudblazor-expert.agent.md`
-
-The agent file teaches GitHub Copilot how to effectively use the MudBlazor MCP tools by providing:
-
-- **Decision Logic**: Automatically selects the right MCP tool for each query
-- **Best Practices**: Enforces "query before answering" to prevent hallucination
-- **Blazor Guidelines**: Includes component architecture and rendering optimization patterns
-- **Tool Chaining**: Combines multiple tools for comprehensive answers
-
-**Example workflow:**
-```
-User: "How do I create a form with validation?"
-
-Agent:
-1. search_components("form input validation") → Find relevant components
-2. get_component_detail("MudForm") → Get parameters and events
-3. get_component_examples("MudTextField", filter="validation") → Get code examples
-4. Provide complete, accurate answer with working code
-```
-
-> **Credits:** This agent file is derived from work in the [github/awesome-copilot](https://github.com/github/awesome-copilot) repository.
-
----
+- Documentation always matches the requested MudBlazor version, including enums and inherited members parsed from source
+- Responses are Markdown, sized for LLM consumption
+- Up to 3 versions are cached side by side with LRU eviction; after the first run a version starts instantly from its serialized index
+- HTTP and stdio transports; readiness and liveness health endpoints report index state and parse failures
 
 ## Quick Start
 
-### Prerequisites
+Prerequisites: [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Git](https://git-scm.com/).
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [Git](https://git-scm.com/)
+1. Find the MudBlazor version in your project's `.csproj`:
 
-### 1. Clone and Build
+   ```xml
+   <PackageReference Include="MudBlazor" Version="9.0.0" />
+   ```
 
-```bash
-dotnet build
-```
+2. Run the server with that version (the `--version` argument is required):
 
-### 2. Find Your MudBlazor Version
+   ```bash
+   dotnet run --project src/MudBlazor.Mcp/MudBlazor.Mcp.csproj -- --version 9.0.0
+   ```
 
-Check your project's `.csproj` file for the MudBlazor version:
+   The first run clones the MudBlazor repository (about 500 MB) and builds the index; later runs load the cached index and start instantly.
 
-```xml
-<PackageReference Include="MudBlazor" Version="9.0.0" />
-```
+3. Verify:
 
-### 3. Run the Server
+   ```bash
+   curl http://localhost:8000/health
+   ```
 
-The `--version` argument is **required** and must match your project's MudBlazor version:
+4. Connect your client (VS Code / Cursor `mcp.json`, HTTP mode):
 
-```bash
-dotnet run --project src/MudBlazor.Mcp/MudBlazor.Mcp.csproj -- --version 9.0.0
-```
+   ```json
+   {
+     "servers": {
+       "mudblazor": {
+         "type": "http",
+         "url": "http://localhost:8000/mcp"
+       }
+     }
+   }
+   ```
 
-The server will:
-1. Clone the MudBlazor repository and checkout the matching tag (`v9.0.0`)
-2. Parse all components using Roslyn and build an index
-3. Cache the index to disk — subsequent runs load instantly
-4. Start the MCP server on `http://localhost:8000`
+## Local MCP (stdio)
 
-### 4. Verify
+Most MCP clients (Cursor, Claude Code, Claude Desktop) spawn the server as a child process and talk over stdin/stdout. No web server is started in this mode.
 
-```bash
-curl http://localhost:8000/health
-```
+### Option A: dotnet run
 
-### 5. Connect Your AI Assistant
-
-**VS Code / Cursor (HTTP mode, mcp.json):**
-```json
-{
-  "servers": {
-    "mudblazor": {
-      "type": "http",
-      "url": "http://localhost:8000/mcp"
-    }
-  }
-}
-```
-
----
-
-## Local MCP (stdio — no frontend required)
-
-Run the MCP server locally without starting a web server. The server communicates directly through stdin/stdout, which is the native mode for Cursor, Claude Code, Claude Desktop, and most MCP clients.
-
-> **Important:** The `--version` argument is required. It must match the MudBlazor version in your project's `.csproj` file (e.g., `<PackageReference Include="MudBlazor" Version="9.0.0" />`).
-
-### Option A — dotnet run (development)
-
-Add this to your project's `.mcp.json` (or `.cursor/mcp.json`, `claude_desktop_config.json`):
+Add to your project's `.mcp.json` (or `.cursor/mcp.json`, `claude_desktop_config.json`):
 
 ```json
 {
@@ -166,21 +82,17 @@ Add this to your project's `.mcp.json` (or `.cursor/mcp.json`, `claude_desktop_c
 }
 ```
 
-Replace `<path-to-MudMCP>` with the absolute path to where you cloned this repository, and `9.0.0` with your project's MudBlazor version.
+Replace `<path-to-MudMCP>` with the absolute path to your clone and `9.0.0` with your project's MudBlazor version.
 
-> The first run per version takes longer because it clones the MudBlazor repository and builds the index. Subsequent runs load from a cached `index.json` and start instantly.
+### Option B: self-contained executable
 
-### Option B — Self-contained executable (recommended for daily use)
-
-Publish a single-file executable that starts instantly without the .NET SDK:
+Publish a single-file executable that starts without the .NET SDK:
 
 ```powershell
 dotnet publish src/MudBlazor.Mcp/MudBlazor.Mcp.csproj `
   -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -o publish/win-x64
 ```
-
-Then use this as your MCP configuration:
 
 ```json
 {
@@ -193,15 +105,9 @@ Then use this as your MCP configuration:
 }
 ```
 
-Replace `<path-to-MudMCP>` with the absolute path to where you cloned this repository, and `9.0.0` with your project's MudBlazor version.
+### Option C: Docker (HTTP mode, persistent cache)
 
-### Option C — Docker (HTTP mode, persistent cache)
-
-Run the server in a container with built-in health checks and a named volume that persists the cloned MudBlazor repository across restarts.
-
-**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose plugin)
-
-**Use the published image** (built by CI for `linux/amd64` and `linux/arm64`):
+Use the published image (built by CI for `linux/amd64` and `linux/arm64`):
 
 ```bash
 docker run -d --name mudblazor-mcp \
@@ -211,46 +117,27 @@ docker run -d --name mudblazor-mcp \
   ghcr.io/m0n7y5/mudmcp:latest
 ```
 
-**Or build locally with Compose:**
+Or build locally with Compose:
 
 ```bash
-# Build the image and start the container
 docker compose up --build -d
-
-# Follow startup logs (first run clones ~500 MB — takes a few minutes)
 docker compose logs -f
-
-# Check health
 curl http://localhost:8000/health
 ```
 
-The MCP endpoint is available at `http://localhost:8000/mcp`. If an existing MCP client config points to the previous `:5180` default, update it to `:8000`.
-
-**Volume:** All cached data is stored under a named Docker volume (`mudblazor-data`) mounted at `/app/data`. Each MudBlazor version gets its own subdirectory (`/app/data/v{Version}/`) containing the git clone and serialized index (`index.json`). The version manifest (`versions.json`) lives at `/app/data/versions.json`. Because tagged commits are immutable, the server does not run `git fetch` on subsequent starts — it simply reuses the existing clone and loads the pre-built `index.json`.
+The MCP endpoint is `http://localhost:8000/mcp`. Cached data lives in the `mudblazor-data` volume mounted at `/app/data`; each version gets its own subdirectory with the git clone and serialized index. Tagged commits are immutable, so existing clones are reused without fetching.
 
 ```bash
-# Stop without removing the volume (cache is preserved)
+# Stop, keep the cache
 docker compose down
 
-# Stop AND delete all cached data (forces a full re-clone and re-index next start)
+# Stop and delete all cached data (full re-clone and re-index next start)
 docker compose down -v
 ```
 
-**Connect your AI assistant** — same config as HTTP mode:
-```json
-{
-  "servers": {
-    "mudblazor": {
-      "type": "http",
-      "url": "http://localhost:8000/mcp"
-    }
-  }
-}
-```
+### Version caching
 
-### Version Caching
-
-The server caches up to **3 MudBlazor versions** simultaneously. Each version gets its own git clone and serialized index:
+Up to 3 MudBlazor versions are cached at once, each with its own clone and index:
 
 ```
 data/
@@ -263,9 +150,7 @@ data/
     index.json
 ```
 
-When a 4th version is requested, the least recently used version is evicted automatically. This means you can work on multiple projects with different MudBlazor versions — each project gets its own `.mcp.json` with the right `--version`, and they share the cached clones.
-
----
+Requesting a 4th version evicts the least recently used one. Projects on different MudBlazor versions can each point their `.mcp.json` at the right `--version` and share the cache.
 
 ### Transport comparison
 
@@ -273,29 +158,7 @@ When a 4th version is requested, the least recently used version is evicted auto
 |------|---------|---------|----------|
 | `--stdio` | `dotnet run -- --stdio --version X.Y.Z` or `.exe --stdio --version X.Y.Z` | No | Cursor, Claude Code, Claude Desktop, local clients |
 | HTTP (default) | `dotnet run -- --version X.Y.Z` | Yes (`:8000`) | VS Code HTTP, MCP Inspector, remote |
-| Docker | `docker compose up` | Yes (`:8000→8080`) | Containerised / persistent cache |
-
----
-
-## Documentation
-
-For comprehensive documentation, see the [docs](./docs/) folder:
-
-| Document | Description |
-|----------|-------------|
-| [Overview](./docs/01-overview.md) | Architecture, design principles, and system overview |
-| [Getting Started](./docs/02-getting-started.md) | Installation, prerequisites, and first run |
-| [Architecture](./docs/03-architecture.md) | Technical architecture and component design |
-| [Best Practices](./docs/04-best-practices.md) | Implemented patterns and practices |
-| [Tools Reference](./docs/05-tools-reference.md) | Complete reference for all 12 MCP tools |
-| [Configuration](./docs/06-configuration.md) | Configuration options and environment setup |
-| [Testing](./docs/07-testing.md) | Unit testing strategy and examples |
-| [MCP Inspector](./docs/08-mcp-inspector.md) | Testing with MCP Inspector tool |
-| [IDE Integration](./docs/09-ide-integration.md) | VS Code, Visual Studio, and Claude Desktop setup |
-| [Troubleshooting](./docs/10-troubleshooting.md) | Common issues and solutions |
-| [Changelog](./docs/CHANGELOG.md) | Version history and release notes |
-
----
+| Docker | `docker compose up` | Yes (`:8000` to `:8080`) | Containerised / persistent cache |
 
 ## Available MCP Tools
 
@@ -303,84 +166,73 @@ For comprehensive documentation, see the [docs](./docs/) folder:
 |------|-------------|
 | `list_components` | Lists all MudBlazor components with optional category filter |
 | `list_categories` | Lists all component categories with descriptions |
-| `get_component_detail` | Gets comprehensive details about a specific component |
+| `get_component_detail` | Gets details about a specific component, optionally with inherited members |
 | `get_component_parameters` | Gets all parameters for a component |
 | `get_component_examples` | Gets code examples for a component |
 | `get_example_by_name` | Gets a specific example by name |
 | `list_component_examples` | Lists all example names for a component |
-| `search_components` | Searches components by query |
+| `search_components` | Searches components by name, description, or parameters |
 | `get_components_by_category` | Gets all components in a specific category |
-| `get_related_components` | Gets components related to a specific component |
-| `get_api_reference` | Gets full API reference for a type |
-| `get_enum_values` | Gets all values for a MudBlazor enum |
+| `get_related_components` | Gets components related through inheritance, category, or docs links |
+| `get_api_reference` | Gets full API reference for a component, base class, or enum |
+| `get_enum_values` | Gets all values for a MudBlazor enum, parsed from source |
 
-**Example Interaction:**
+Example prompts:
 
-Ask your AI assistant:
-- *"List all MudBlazor button components"*
-- *"Show me how to use MudTextField with validation"*
-- *"What parameters does MudDataGrid support?"*
-- *"What are the available Color enum values?"*
+- "List all MudBlazor button components"
+- "Show me how to use MudTextField with validation"
+- "What parameters does MudDataGrid support?"
+- "What are the available Color enum values?"
 
----
+## GitHub Copilot agent file
+
+`.github/agents/mudblazor-expert.agent.md` teaches Copilot when to call which MCP tool, to query before answering, and how to chain tools (search, then detail, then examples). Derived from [github/awesome-copilot](https://github.com/github/awesome-copilot).
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Overview](./docs/01-overview.md) | Architecture and design overview |
+| [Getting Started](./docs/02-getting-started.md) | Installation and first run |
+| [Architecture](./docs/03-architecture.md) | Technical architecture and component design |
+| [Best Practices](./docs/04-best-practices.md) | Implemented patterns and practices |
+| [Tools Reference](./docs/05-tools-reference.md) | Reference for all 12 MCP tools |
+| [Configuration](./docs/06-configuration.md) | Configuration options and environment setup |
+| [Testing](./docs/07-testing.md) | Unit testing strategy and examples |
+| [MCP Inspector](./docs/08-mcp-inspector.md) | Testing with MCP Inspector |
+| [IDE Integration](./docs/09-ide-integration.md) | VS Code, Visual Studio, and Claude Desktop setup |
+| [Troubleshooting](./docs/10-troubleshooting.md) | Common issues and solutions |
 
 ## Project Structure
 
 ```
-MudBlazor.Mcp/
+MudMCP/
 ├── .github/
-│   └── agents/
-│       └── mudblazor-expert.agent.md  # GitHub Copilot agent file
+│   ├── agents/                     # Copilot agent files
+│   └── workflows/ci.yml            # Build, test, publish image to GHCR
 ├── src/
-│   └── MudBlazor.Mcp/              # Main MCP server
+│   └── MudBlazor.Mcp/              # MCP server
 │       ├── Configuration/          # Strongly-typed options
 │       ├── Models/                 # Domain models (immutable records)
-│       ├── Services/               # Core services
+│       ├── Services/               # Indexing, git, version cache
 │       │   └── Parsing/            # Roslyn-based parsers
 │       └── Tools/                  # MCP tool implementations
 ├── tests/
 │   └── MudBlazor.Mcp.Tests/        # Unit tests
-├── docs/                           # Documentation
-└── README.md
+└── docs/
 ```
-
----
 
 ## Contributing
 
-Contributions are welcome! Please see the [Contributing Guide](./docs/01-overview.md#contributing) for details.
-
-### Quick Contribution Steps
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
+Fork, branch, and open a pull request. Run `dotnet build` and `dotnet test` before submitting; warnings are treated as errors.
 
 ## License
 
-This project is licensed under the **GNU General Public License v2.0 (GPL-2.0)** in compliance with MudBlazor's licensing.
-
-- Source code is provided under GPL-2.0
-- Original copyright notices are retained
-- Modifications are documented
-
-See the [LICENSE](LICENSE) file for full details.
-
----
+Licensed under the [GNU General Public License v2.0](LICENSE), matching MudBlazor's license. Original copyright notices are retained.
 
 ## Acknowledgments
 
-- [MudBlazor](https://mudblazor.com/) — The excellent Blazor component library
-- [Model Context Protocol](https://modelcontextprotocol.io/) — The protocol specification
-- [Roslyn](https://github.com/dotnet/roslyn) — The .NET Compiler Platform
-- [github/awesome-copilot](https://github.com/github/awesome-copilot) — Inspiration for the expert agent file
-
----
-
-<p align="center">
-  Built with ❤️ for the Blazor community
-</p>
+- [MudBlazor](https://mudblazor.com/), the Blazor component library this server documents
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Roslyn](https://github.com/dotnet/roslyn)
+- [github/awesome-copilot](https://github.com/github/awesome-copilot) for the agent file base
