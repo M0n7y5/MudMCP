@@ -118,6 +118,7 @@ public sealed class ComponentIndexer : IComponentIndexer
             await IndexComponentsAsync(repoPath, cancellationToken).ConfigureAwait(false);
             await IndexBaseTypesAsync(repoPath, cancellationToken).ConfigureAwait(false);
             await IndexEnumsAsync(repoPath, cancellationToken).ConfigureAwait(false);
+            PromoteInheritedSurface();
             await IndexDocumentationAsync(repoPath, cancellationToken).ConfigureAwait(false);
             await IndexExamplesAsync(repoPath, cancellationToken).ConfigureAwait(false);
 
@@ -142,7 +143,7 @@ public sealed class ComponentIndexer : IComponentIndexer
     /// <see cref="CachedIndex"/> record structure changes or the serialization format
     /// is updated in a backward-incompatible way, so stale caches are automatically rebuilt.
     /// </summary>
-    private const int CacheSchemaVersion = 3;
+    private const int CacheSchemaVersion = 4;
 
     private async Task<bool> TryLoadCachedIndexAsync(CancellationToken cancellationToken)
     {
@@ -275,16 +276,37 @@ public sealed class ComponentIndexer : IComponentIndexer
 
     private async Task IndexEnumsAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var enumsPath = Path.Combine(repoPath, "src", "MudBlazor", "Enums");
+        await IndexEnumsInDirectoryAsync(
+            Path.Combine(repoPath, "src", "MudBlazor", "Enums"),
+            warnIfMissing: true,
+            cancellationToken).ConfigureAwait(false);
 
+        // Feature enums live next to components (ChartType, DataGridEditMode), not only under Enums/.
+        await IndexEnumsInDirectoryAsync(
+            Path.Combine(repoPath, "src", "MudBlazor", "Components"),
+            warnIfMissing: false,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task IndexEnumsInDirectoryAsync(
+        string enumsPath,
+        bool warnIfMissing,
+        CancellationToken cancellationToken)
+    {
         if (!Directory.Exists(enumsPath))
         {
-            _logger.LogWarning("Enums directory not found: {Path}", enumsPath);
+            if (warnIfMissing)
+            {
+                _logger.LogWarning("Enums directory not found: {Path}", enumsPath);
+            }
+
             return;
         }
 
-        var enumFiles = Directory.GetFiles(enumsPath, "*.cs", SearchOption.AllDirectories);
-        _logger.LogDebug("Found {Count} enum files", enumFiles.Length);
+        var enumFiles = Directory.GetFiles(enumsPath, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.EndsWith(RazorCsExtension, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        _logger.LogDebug("Found {Count} enum files under {Path}", enumFiles.Length, enumsPath);
 
         foreach (var file in enumFiles)
         {
@@ -294,14 +316,14 @@ public sealed class ComponentIndexer : IComponentIndexer
             {
                 foreach (var parsed in await _xmlParser.ParseEnumFileAsync(file, cancellationToken).ConfigureAwait(false))
                 {
-                    _apiReferences[parsed.EnumName] = new ApiReference(
+                    _apiReferences.TryAdd(parsed.EnumName, new ApiReference(
                         TypeName: parsed.EnumName,
                         Namespace: parsed.Namespace ?? "MudBlazor",
                         Summary: parsed.Summary,
                         BaseType: null,
                         Members: null,
                         Kind: "enum",
-                        EnumValues: parsed.Values);
+                        EnumValues: parsed.Values));
 
                     _logger.LogTrace("Indexed enum: {Name}", parsed.EnumName);
                 }
@@ -319,42 +341,97 @@ public sealed class ComponentIndexer : IComponentIndexer
     /// into the API reference index so inherited-member walks can traverse the full chain.
     /// Base classes are not surfaced as components; internal ones still shape the public
     /// component surface through their [Parameter] properties, so accessibility is not filtered here.
+    /// Also indexes Components/*/Base (e.g. MudChartBase) the same way.
     /// </summary>
     private async Task IndexBaseTypesAsync(string repoPath, CancellationToken cancellationToken)
     {
-        var basePath = Path.Combine(repoPath, "src", "MudBlazor", "Base");
+        await IndexApiTypesInDirectoryAsync(
+            Path.Combine(repoPath, "src", "MudBlazor", "Base"),
+            SearchOption.AllDirectories,
+            applyVisibilityFilters: false,
+            warnIfMissing: true,
+            cancellationToken).ConfigureAwait(false);
 
-        if (!Directory.Exists(basePath))
+        var componentsPath = Path.Combine(repoPath, "src", "MudBlazor", "Components");
+        if (!Directory.Exists(componentsPath))
         {
-            _logger.LogWarning("Base types directory not found: {Path}", basePath);
             return;
         }
 
-        var baseFiles = Directory.GetFiles(basePath, "*.cs", SearchOption.AllDirectories);
-        _logger.LogDebug("Found {Count} base type files", baseFiles.Length);
-
-        foreach (var file in baseFiles)
+        foreach (var baseDir in Directory.GetDirectories(componentsPath, "Base", SearchOption.AllDirectories))
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            await IndexApiTypesInDirectoryAsync(
+                baseDir,
+                SearchOption.AllDirectories,
+                applyVisibilityFilters: false,
+                warnIfMissing: false,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-            try
+    private async Task IndexApiTypesInDirectoryAsync(
+        string path,
+        SearchOption searchOption,
+        bool applyVisibilityFilters,
+        bool warnIfMissing,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(path))
+        {
+            if (warnIfMissing)
             {
-                var parseResult = await _xmlParser.ParseComponentFileAsync(file, cancellationToken).ConfigureAwait(false);
+                _logger.LogWarning("Base types directory not found: {Path}", path);
+            }
 
-                if (parseResult is null)
+            return;
+        }
+
+        var files = Directory.GetFiles(path, "*.cs", searchOption);
+        _logger.LogDebug("Found {Count} API type files under {Path}", files.Length, path);
+
+        foreach (var file in files)
+        {
+            await IndexApiReferenceFileAsync(file, applyVisibilityFilters, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task IndexApiReferenceFileAsync(
+        string filePath,
+        bool applyVisibilityFilters,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            var parseResult = await _xmlParser.ParseComponentFileAsync(filePath, cancellationToken).ConfigureAwait(false);
+
+            if (parseResult is null)
+            {
+                return;
+            }
+
+            if (applyVisibilityFilters)
+            {
+                if (parseResult.IsInternal && !_options.Parsing.IncludeInternalComponents)
                 {
-                    continue;
+                    return;
                 }
 
-                // Components take precedence over base classes on name collisions.
-                _apiReferences.TryAdd(parseResult.ClassName, CreateApiReference(parseResult));
-                _logger.LogTrace("Indexed base type: {Name}", parseResult.ClassName);
+                if (parseResult.IsDeprecated && !_options.Parsing.IncludeDeprecatedComponents)
+                {
+                    return;
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Interlocked.Increment(ref _componentParseFailures);
-                _logger.LogWarning(ex, "Failed to parse base type file: {File}", file);
-            }
+
+            // Components take precedence over supporting types on name collisions.
+            _apiReferences.TryAdd(parseResult.ClassName, CreateApiReference(parseResult));
+            _logger.LogTrace("Indexed API type: {Name}", parseResult.ClassName);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Interlocked.Increment(ref _componentParseFailures);
+            _logger.LogWarning(ex, "Failed to parse API type file: {File}", filePath);
         }
     }
 
@@ -379,6 +456,15 @@ public sealed class ComponentIndexer : IComponentIndexer
         foreach (var file in allFiles)
         {
             await IndexSingleComponentFileAsync(file, dirName, cancellationToken).ConfigureAwait(false);
+        }
+
+        var supportFiles = Directory.GetFiles(componentDir, $"*{CsExtension}")
+            .Where(f => !f.EndsWith(RazorCsExtension, StringComparison.OrdinalIgnoreCase)
+                        && !Path.GetFileName(f).StartsWith("Mud", StringComparison.OrdinalIgnoreCase));
+
+        foreach (var file in supportFiles)
+        {
+            await IndexApiReferenceFileAsync(file, applyVisibilityFilters: true, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -406,7 +492,9 @@ public sealed class ComponentIndexer : IComponentIndexer
             }
 
             var componentName = parseResult.ClassName;
-            var category = _categoryMapper.GetCategoryName(componentName) 
+            var baseType = parseResult.BaseType
+                ?? await ReadRazorInheritsAsync(filePath, cancellationToken).ConfigureAwait(false);
+            var category = _categoryMapper.GetCategoryName(componentName)
                 ?? _categoryMapper.InferCategoryFromName(componentName);
 
             var componentInfo = new ComponentInfo(
@@ -415,7 +503,7 @@ public sealed class ComponentIndexer : IComponentIndexer
                 Summary: parseResult.Summary ?? $"{componentName} component",
                 Description: parseResult.Remarks,
                 Category: category,
-                BaseType: parseResult.BaseType,
+                BaseType: baseType,
                 Parameters: parseResult.Parameters,
                 Events: parseResult.Events,
                 Methods: parseResult.Methods,
@@ -430,8 +518,7 @@ public sealed class ComponentIndexer : IComponentIndexer
             _components[componentName] = componentInfo;
             _logger.LogTrace("Indexed component: {Name}", componentName);
 
-            // Also index as API reference
-            _apiReferences[componentName] = CreateApiReference(parseResult);
+            _apiReferences[componentName] = CreateApiReference(parseResult with { BaseType = baseType });
         }
         catch (IOException ex)
         {
@@ -899,6 +986,157 @@ public sealed class ComponentIndexer : IComponentIndexer
             .ToList();
 
         return Task.FromResult<IReadOnlyList<ComponentInfo>>(relatedComponents);
+    }
+
+    /// <summary>
+    /// Partials that declare no [Parameter]s still expose the inherited surface
+    /// (MudChart's parameters live on MudChartBase). Copy that surface onto the
+    /// component so default detail/parameter tools are not empty.
+    /// </summary>
+    private void PromoteInheritedSurface()
+    {
+        foreach (var name in _components.Keys.ToList())
+        {
+            if (!_components.TryGetValue(name, out var component))
+            {
+                continue;
+            }
+
+            if (component.Parameters.Count > 0 || component.BaseType is null)
+            {
+                continue;
+            }
+
+            var parameters = new List<ComponentParameter>();
+            var events = new List<ComponentEvent>(component.Events);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var evt in component.Events)
+            {
+                seen.Add(evt.Name);
+            }
+
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { name };
+            var baseName = StripGenericArguments(component.BaseType);
+
+            while (baseName is not null
+                   && visited.Add(baseName)
+                   && _apiReferences.TryGetValue(baseName, out var baseRef))
+            {
+                foreach (var member in baseRef.Members ?? [])
+                {
+                    if (!seen.Add(member.Name))
+                    {
+                        continue;
+                    }
+
+                    if (member.MemberType.Equals("Property", StringComparison.OrdinalIgnoreCase))
+                    {
+                        parameters.Add(new ComponentParameter(
+                            Name: member.Name,
+                            Type: member.ReturnType,
+                            Description: member.Description,
+                            DefaultValue: null,
+                            IsRequired: false,
+                            IsCascading: false,
+                            Category: null));
+                    }
+                    else if (member.MemberType.Equals("Event", StringComparison.OrdinalIgnoreCase))
+                    {
+                        events.Add(new ComponentEvent(
+                            Name: member.Name,
+                            EventArgsType: EventArgsTypeFromReturnType(member.ReturnType),
+                            Description: member.Description));
+                    }
+                }
+
+                baseName = StripGenericArguments(baseRef.BaseType);
+            }
+
+            if (parameters.Count == 0 && events.Count == component.Events.Count)
+            {
+                continue;
+            }
+
+            _components[name] = component with
+            {
+                Parameters = parameters,
+                Events = events
+            };
+
+            if (!_apiReferences.TryGetValue(name, out var selfRef))
+            {
+                continue;
+            }
+
+            var members = new List<ApiMember>();
+            foreach (var param in parameters)
+            {
+                members.Add(new ApiMember(param.Name, "Property", param.Type, param.Description));
+            }
+
+            foreach (var evt in events)
+            {
+                var returnType = evt.EventArgsType is null
+                    ? "EventCallback"
+                    : $"EventCallback<{evt.EventArgsType}>";
+                members.Add(new ApiMember(evt.Name, "Event", returnType, evt.Description));
+            }
+
+            if (selfRef.Members is not null)
+            {
+                members.AddRange(selfRef.Members.Where(m =>
+                    m.MemberType.Equals("Method", StringComparison.OrdinalIgnoreCase)));
+            }
+
+            _apiReferences[name] = selfRef with { Members = members };
+        }
+    }
+
+    private static async Task<string?> ReadRazorInheritsAsync(
+        string razorCsPath,
+        CancellationToken cancellationToken)
+    {
+        if (!razorCsPath.EndsWith(RazorCsExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var razorPath = razorCsPath[..^3];
+        if (!File.Exists(razorPath))
+        {
+            return null;
+        }
+
+        var text = await File.ReadAllTextAsync(razorPath, cancellationToken).ConfigureAwait(false);
+        const string prefix = "@inherits ";
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line)
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var inherited = trimmed[prefix.Length..].Trim();
+            return inherited.Length == 0 ? null : inherited;
+        }
+
+        return null;
+    }
+
+    private static string? EventArgsTypeFromReturnType(string? returnType)
+    {
+        const string prefix = "EventCallback<";
+        if (returnType is null
+            || !returnType.StartsWith(prefix, StringComparison.Ordinal)
+            || !returnType.EndsWith('>'))
+        {
+            return null;
+        }
+
+        return returnType[prefix.Length..^1];
     }
 
     private void EnsureIndexed()

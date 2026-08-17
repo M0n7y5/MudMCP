@@ -228,6 +228,26 @@ public class ExampleExtractorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExtractExamplesAsync_WithPluralDocsFolder_FindsExamples()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"mudmcp-test-{Guid.NewGuid():N}");
+        _tempDirs.Add(tempDir);
+
+        var exampleDir = Path.Combine(tempDir, "Pages", "Components", "Charts");
+        Directory.CreateDirectory(exampleDir);
+
+        await File.WriteAllTextAsync(Path.Combine(exampleDir, "BarChartBasicExample.razor"), """
+            <MudChart ChartType="ChartType.Bar" />
+            """);
+
+        var result = await _extractor.ExtractExamplesAsync(tempDir, "MudChart", CancellationToken.None);
+
+        Assert.Single(result.Examples);
+        Assert.Equal(0, result.FailureCount);
+        Assert.Contains("MudChart", result.Examples[0].RazorMarkup);
+    }
+
+    [Fact]
     public async Task ExtractExamplesAsync_WithUnreadableExampleFile_CountsFailureAndKeepsPartialResults()
     {
         // File permission-based failure injection requires POSIX permissions.

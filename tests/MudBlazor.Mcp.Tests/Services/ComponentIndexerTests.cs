@@ -959,4 +959,143 @@ public class ComponentIndexerTests : IDisposable
         Assert.DoesNotContain("MudUnknownThing", button.RelatedComponents);
         Assert.DoesNotContain("MudButton", button.RelatedComponents);
     }
+
+    [Fact]
+    public async Task BuildIndexAsync_IndexesNestedEnumsUnderComponents()
+    {
+        var repoPath = await CreateChartRepoAsync();
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        await indexer.BuildIndexAsync();
+
+        var apiRef = await indexer.GetApiReferenceAsync("ChartType");
+        Assert.NotNull(apiRef);
+        Assert.Equal("enum", apiRef.Kind);
+        Assert.NotNull(apiRef.EnumValues);
+        Assert.Contains(apiRef.EnumValues, v => v.Name == "Bar" && v.Description == "Data is displayed as rectangles.");
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_IndexesSupportingTypesAsApiReferencesNotComponents()
+    {
+        var repoPath = CreateTempRepoDir();
+        var pickerDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "DatePicker");
+        Directory.CreateDirectory(pickerDir);
+
+        await File.WriteAllTextAsync(Path.Combine(pickerDir, "MudDateRangePicker.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudDateRangePicker
+            {
+                [Parameter] public DateRange? DateRange { get; set; }
+            }
+            """);
+
+        await File.WriteAllTextAsync(Path.Combine(pickerDir, "DateRange.cs"), """
+            namespace MudBlazor;
+            public class DateRange
+            {
+                public DateTime? Start { get; set; }
+                public DateTime? End { get; set; }
+
+                public string ToIsoDateString() => string.Empty;
+            }
+            """);
+
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+        await indexer.BuildIndexAsync();
+
+        Assert.Null(await indexer.GetComponentAsync("DateRange"));
+        var all = await indexer.GetAllComponentsAsync();
+        Assert.DoesNotContain(all, c => c.Name == "DateRange");
+
+        var apiRef = await indexer.GetApiReferenceAsync("DateRange");
+        Assert.NotNull(apiRef);
+        Assert.Equal("class", apiRef.Kind);
+        Assert.NotNull(apiRef.Members);
+        Assert.Contains(apiRef.Members, m => m.Name == "ToIsoDateString" && m.MemberType == "Method");
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_IndexesComponentLocalBaseTypes()
+    {
+        var repoPath = await CreateChartRepoAsync();
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        await indexer.BuildIndexAsync();
+
+        Assert.Null(await indexer.GetComponentAsync("MudChartBase"));
+
+        var apiRef = await indexer.GetApiReferenceAsync("MudChartBase");
+        Assert.NotNull(apiRef);
+        Assert.NotNull(apiRef.Members);
+        Assert.Contains(apiRef.Members, m => m.Name == "ChartType" && m.MemberType == "Property");
+        Assert.Contains(apiRef.Members, m => m.Name == "SelectedIndexChanged" && m.MemberType == "Event");
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_PromotesParametersFromRazorInheritsBase()
+    {
+        var repoPath = await CreateChartRepoAsync();
+        var (indexer, _) = CreateIndexerWithContext(gitService: CreateGitService(repoPath).Object);
+
+        await indexer.BuildIndexAsync();
+
+        var chart = await indexer.GetComponentAsync("MudChart");
+        Assert.NotNull(chart);
+        Assert.Equal("MudChartBase<T, IChartOptions>", chart.BaseType);
+        Assert.Contains(chart.Parameters, p => p.Name == "ChartType" && p.Type == "ChartType");
+        Assert.Contains(chart.Parameters, p => p.Name == "Width");
+        Assert.Contains(chart.Events, e => e.Name == "SelectedIndexChanged");
+
+        var apiRef = await indexer.GetApiReferenceAsync("MudChart");
+        Assert.NotNull(apiRef);
+        Assert.Contains(apiRef.Members!, m => m.Name == "ChartType" && m.MemberType == "Property");
+        Assert.Contains(apiRef.Members!, m => m.Name == "RebuildChart" && m.MemberType == "Method");
+    }
+
+    private async Task<string> CreateChartRepoAsync()
+    {
+        var repoPath = CreateTempRepoDir();
+        var chartDir = Path.Combine(repoPath, "src", "MudBlazor", "Components", "Chart");
+        var baseDir = Path.Combine(chartDir, "Base");
+        var enumDir = Path.Combine(chartDir, "Models", "Enums");
+        Directory.CreateDirectory(baseDir);
+        Directory.CreateDirectory(enumDir);
+
+        await File.WriteAllTextAsync(Path.Combine(chartDir, "MudChart.razor"), """
+            @inherits MudChartBase<T, IChartOptions>
+            @typeparam T
+            """);
+
+        await File.WriteAllTextAsync(Path.Combine(chartDir, "MudChart.razor.cs"), """
+            namespace MudBlazor;
+            public partial class MudChart<T>
+            {
+                public override void RebuildChart() { }
+            }
+            """);
+
+        await File.WriteAllTextAsync(Path.Combine(baseDir, "MudChartBase.cs"), """
+            namespace MudBlazor;
+            public abstract class MudChartBase<T, TOptions>
+            {
+                [Parameter] public ChartType ChartType { get; set; }
+                [Parameter] public string Width { get; set; } = "80%";
+                [Parameter] public EventCallback<int> SelectedIndexChanged { get; set; }
+            }
+            """);
+
+        await File.WriteAllTextAsync(Path.Combine(enumDir, "ChartType.cs"), """
+            namespace MudBlazor;
+
+            public enum ChartType
+            {
+                /// <summary>Data is displayed as rectangles.</summary>
+                Bar,
+                Pie
+            }
+            """);
+
+        return repoPath;
+    }
 }

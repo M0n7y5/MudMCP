@@ -43,14 +43,18 @@ public sealed partial class ExampleExtractor
         var parentDir = Path.Combine(docsPath, "Pages", "Components");
         var componentDocsPath = Path.Combine(parentDir, folderName);
 
-        // Case-insensitive directory lookup for cross-platform compatibility
+        // Case-insensitive directory lookup for cross-platform compatibility.
+        // Also try the English plural (MudChart → Charts).
         if (!Directory.Exists(componentDocsPath) && Directory.Exists(parentDir))
         {
             try
             {
-                var match = Directory.GetDirectories(parentDir)
-                    .FirstOrDefault(d => Path.GetFileName(d)
-                        .Equals(folderName, StringComparison.OrdinalIgnoreCase));
+                var dirs = Directory.GetDirectories(parentDir);
+                var match = dirs.FirstOrDefault(d => Path.GetFileName(d)
+                    .Equals(folderName, StringComparison.OrdinalIgnoreCase));
+
+                match ??= dirs.FirstOrDefault(d => Path.GetFileName(d)
+                    .Equals(folderName + "s", StringComparison.OrdinalIgnoreCase));
 
                 if (match is not null)
                 {
