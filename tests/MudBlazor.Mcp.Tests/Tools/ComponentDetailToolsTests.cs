@@ -129,6 +129,40 @@ public class ComponentDetailToolsTests
     }
 
     [Fact]
+    public async Task GetComponentParametersAsync_WithNullableEnumParameter_UsageHintOmitsNullableMarker()
+    {
+        // Arrange
+        var indexer = new Mock<IComponentIndexer>();
+        var component = new ComponentInfo(
+            Name: "MudButton",
+            Namespace: "MudBlazor",
+            Summary: "A button",
+            Description: null,
+            Category: "Buttons",
+            BaseType: "MudComponentBase",
+            Parameters: [
+                new ComponentParameter("IconSize", "Size?", "The size of icons.", null, false, false, "Appearance")
+            ],
+            Events: [],
+            Methods: [],
+            Examples: [],
+            RelatedComponents: [],
+            DocumentationUrl: null,
+            SourceUrl: null
+        );
+        indexer.Setup(x => x.GetComponentAsync("MudButton", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(component);
+
+        // Act
+        var result = await ComponentDetailTools.GetComponentParametersAsync(
+            indexer.Object, NullLogger, _versionContext, "MudButton", null, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("- **Usage:** `IconSize=\"Size.Medium\"`", result);
+        Assert.DoesNotContain("Size?.", result);
+    }
+
+    [Fact]
     public async Task GetComponentDetailAsync_WithInheritedMembers_WalksBaseChain()
     {
         // Arrange - MudButton : MudBaseButton : MudComponentBase

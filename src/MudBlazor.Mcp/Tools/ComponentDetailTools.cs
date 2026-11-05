@@ -389,8 +389,9 @@ public sealed class ComponentDetailTools
         // show EnumType.Value syntax
         if (IsLikelyEnumType(param.Type))
         {
-            var exampleValue = GetEnumExampleValue(param.Type);
-            return $"{param.Name}=\"{param.Type}.{exampleValue}\"";
+            var enumType = param.Type.TrimEnd('?');
+            var exampleValue = GetEnumExampleValue(enumType);
+            return $"{param.Name}=\"{enumType}.{exampleValue}\"";
         }
 
         return null;
